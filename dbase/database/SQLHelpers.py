@@ -1,7 +1,17 @@
+from trade.assets.Calculate import Calculate
+from trade.assets.Option import Option
+import numpy as np
+import logging
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, Date, Float, Boolean, Enum, Time, DateTime, TIMESTAMP, PrimaryKeyConstraint
+from sqlalchemy import create_engine
+import mysql.connector
+import sys
+import pandas as pd
+import mysql.connector
+import os
 from dotenv import load_dotenv
 load_dotenv()
-import os
-import sys
 sql_pw = (os.environ.get('MYSQL_PASSWORD'))
 sql_host = (os.environ.get('MYSQL_HOST'))
 sql_port = (os.environ.get('MYSQL_PORT'))
@@ -9,46 +19,77 @@ sql_user = os.environ.get('MYSQL_USER')
 sql_user
 sys.path.append(
     os.environ.get('WORK_DIR'))
-import pandas as pd
-import mysql.connector
-from sqlalchemy import create_engine
-from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, Date, Float, Boolean, Enum, Time, DateTime, TIMESTAMP, PrimaryKeyConstraint
-from sqlalchemy.exc import SQLAlchemyError
 
+
+
+"""
+This module is responsible for organizing all functions necessary for accessing/retrieving data from SQL Database
+"""
+
+# Inside the imported module
+logger = logging.getLogger(__name__)  # Using a module-specific logger
+logger.error('An error occurred in the module')
+logger.propagate = True  # Ensure it propagates to the root logger
 
 
 def create_engine_short(db):
     return create_engine(f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}")
 
 
-def store_SQL_data(db, sql_table_name, data, if_exists = 'append'):
-    ## ADD INITIAL DATA TO DATABASE
+def store_SQL_data(db, sql_table_name, data, if_exists='append'):
+    # ADD INITIAL DATA TO DATABASE
     engine = create_engine_short(db)
-    data.to_sql(sql_table_name, engine, if_exists=if_exists, index = False)
+    data.to_sql(sql_table_name, engine, if_exists=if_exists, index=False)
     print('Data successfully saved')
+
+
+def drop_SQL_Table_Duplicates(db, sql_table_name):
     # RE-QUERY WHOLE DATA
     df = query_database(db, sql_table_name, f"SELECT * FROM {sql_table_name}")
 
     # DROP DUPLICATES OF WHOLE DATA
     df = df.drop_duplicates()
+    range_ = list(range(0, len(df), 10000),)
+    range_.append(len(df))
 
+    # Implementing a batch save
+    for i, i2 in enumerate(list(range(0, len(df), 10000)), start=1):
+        start = i2
+        end = i
+        if start != range_[-1]:
+            if i != 1:
+                print(i2+1, range_[i])
+                start, end = i2+1, range_[i]
+            else:
+                print(i2, range_[i])
+                start, end = i2, range_[i]
+        else:
+            print(i2, range_[-1])
+            start, end = i2, range_[-1]
+        use_df = df.iloc[start:end+1, :]
+        if i == 1:
+            store_SQL_data(db, sql_table_name, use_df, if_exists='replace')
+        else:
+            store_SQL_data(db, sql_table_name, use_df, if_exists='append')
     # REPLACE INITIAL TABLE WITH NON DUPLICATED TABLE
-    df.to_sql(sql_table_name, engine, if_exists='replace', index = False)
+    print('Duplicates succesfully dropped')
+
 
 def query_database(db, query):
     engine = create_engine_short(db)
     return pd.read_sql(query, engine)
 
 
-
 def create_SQL_connection():
 
     try:
         connection = mysql.connector.connect(
-            host=sql_host,      # The IP address or domain name of your MySQL server (e.g., '192.168.1.100' or 'yourdomain.com')
-            port=sql_port,                  # MySQL port number (typically 3306)
+            # The IP address or domain name of your MySQL server (e.g., '192.168.1.100' or 'yourdomain.com')
+            host=sql_host,
+            # MySQL port number (typically 3306)
+            port=sql_port,
             database='securities_master',     # The name of the database you want to connect to
-            user= sql_user,         # Your MySQL username
+            user=sql_user,         # Your MySQL username
             password=sql_pw     # Your MySQL password
         )
         print("Successfully connected to the database")
@@ -58,11 +99,13 @@ def create_SQL_connection():
 
     return connection
 
-def close_SQL_connection(connection, cursor = None):
+
+def close_SQL_connection(connection, cursor=None):
     if connection.is_connected():
         cursor.close() if cursor else None
         connection.close()
         print("MySQL connection is closed")
+
 
 def create_SQL_database(connection, db_name):
     cursor = connection.cursor()
@@ -74,7 +117,7 @@ def create_SQL_database(connection, db_name):
         exit(1)
     connection.commit()
     print("Database created successfully")
-    close_SQL_connection(connection, cursor )
+    close_SQL_connection(connection, cursor)
 
 
 def create_table_from_schema(engine, table_schema):
@@ -137,7 +180,8 @@ def create_table_from_schema(engine, table_schema):
             column_type = Integer
         elif col_type == 'String':
             if col_length is None:
-                raise ValueError(f"Length must be specified for String type column: {col_name}")
+                raise ValueError(
+                    f"Length must be specified for String type column: {col_name}")
             column_type = String(col_length)
         elif col_type == 'Date':
             column_type = Date
@@ -147,7 +191,8 @@ def create_table_from_schema(engine, table_schema):
             column_type = Boolean
         elif col_type == 'Enum':
             if col_values is None or not isinstance(col_values, list):
-                raise ValueError(f"Values must be specified for Enum type column: {col_name}")
+                raise ValueError(
+                    f"Values must be specified for Enum type column: {col_name}")
             column_type = Enum(*col_values)
         elif col_type == 'Time':
             column_type = Time
@@ -174,6 +219,7 @@ def create_table_from_schema(engine, table_schema):
     # Create the table in the database
     try:
         metadata.create_all(engine)
-        print(f"Table '{table_name}' has been created with columns: {[col.name for col in column_definitions]}")
+        print(
+            f"Table '{table_name}' has been created with columns: {[col.name for col in column_definitions]}")
     except SQLAlchemyError as e:
         print(f"An error occurred: {e}")

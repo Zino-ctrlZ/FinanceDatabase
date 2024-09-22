@@ -1,5 +1,7 @@
-\fdbenv
+\finenv
 \.env
-finenv
+.DS_Strore
 *.pyc
-.env
+.*-*-*.pyc
+*_*_*.pyc
+*__*__*-*.pyc
