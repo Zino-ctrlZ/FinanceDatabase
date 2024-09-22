@@ -1,0 +1,7 @@
+\finenv
+\.env
+.DS_Strore
+*.pyc
+.*-*-*.pyc
+*_*_*.pyc
+*__*__*-*.pyc
