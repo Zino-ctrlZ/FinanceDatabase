@@ -9,12 +9,8 @@ sql_user = os.environ.get('MYSQL_USER')
 sql_user
 sys.path.append(
     os.environ.get('WORK_DIR'))
-from trade.assets.Option import Option
-from trade.assets.Calculate import Calculate
 import pandas as pd
-from datetime import datetime
 import mysql.connector
-from mysql.connector import Error
 from sqlalchemy import create_engine
 from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, Date, Float, Boolean, Enum, Time, DateTime, TIMESTAMP, PrimaryKeyConstraint
 from sqlalchemy.exc import SQLAlchemyError
@@ -39,7 +35,7 @@ def store_SQL_data(db, sql_table_name, data, if_exists = 'append'):
     # REPLACE INITIAL TABLE WITH NON DUPLICATED TABLE
     df.to_sql(sql_table_name, engine, if_exists='replace', index = False)
 
-def query_database(db, sq_table_name, query):
+def query_database(db, query):
     engine = create_engine_short(db)
     return pd.read_sql(query, engine)
 

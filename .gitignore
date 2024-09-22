@@ -1,2 +1,5 @@
 \fdbenv
 \.env
+finenv
+*.pyc
+.env
