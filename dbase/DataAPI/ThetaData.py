@@ -53,7 +53,7 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, interval: str, right: str, st
     ivl = identify_length(*extract_numeric_value(interval), rt=True)*60000
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     strike *= 1000
-    strike = float(strike)
+    strike = int(strike)
     start_time = str(convert_time_to_miliseconds(start_time))
     url = "http://127.0.0.1:25510/v2/hist/option/ohlc"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl,
@@ -62,6 +62,13 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, interval: str, right: str, st
     response = requests.get(url, headers=headers, params=querystring)
     print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text))
+    if len(data.columns) == 1:
+        logger.error('')
+        logger.error(
+            f'Following error for {symbol}, {exp}, {right}, {strike}, Interval: {interval}')
+        logger.error(
+            f'Retrieve OHLC mismatching dataframe size. Column says: {data.columns[0]}')
+        print('Column mismatch. Check log')
     data.rename(columns={x: x.capitalize()
                 for x in data.columns}, inplace=True)
     # print(data.columns)
@@ -101,23 +108,27 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: i
             f'EOD OHLC mismatching dataframe size. Column says: {data.columns[0]}')
         print('Column mismatch. Check log')
     else:
+
+        data['midpoint'] = data[['bid', 'ask']].sum(axis=1)/2
+        data['weighted_midpoint'] = ((data['ask_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (
+            data['ask'])) + ((data['bid_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (data['bid']))
         data.rename(columns={x: x.capitalize()
                     for x in data.columns}, inplace=True)
-        # print(data.columns)
         data['time'] = '16:00:00' if rt else ''
         data['Date2'] = pd.to_datetime(data.Date.astype(
             str)).apply(lambda x: x.strftime('%Y-%m-%d'))
-        data['Date3'] = data.Date2 + ' ' + data.time
+        data['Date3'] = data.Date2
         data['datetime'] = pd.to_datetime(data.Date3)
         data.set_index('datetime', inplace=True)
-        data.rename(columns={'Bid': 'CloseBid', 'Ask': 'CloseAsk',
-                    'Count': 'Open_interest'}, inplace=True)
+        data.rename(columns={'Bid': 'CloseBid', 'Ask': 'CloseAsk'
+                             }, inplace=True)
         columns = ['Open', 'High', 'Low', 'Close', 'Volume',
-                   'Open_interest', 'Bid_size', 'CloseBid', 'Ask_size', 'CloseAsk']
+                   'Bid_size', 'CloseBid', 'Ask_size', 'CloseAsk', 'Midpoint', 'Weighted_midpoint']
         data = data[columns]
         data.index.name = 'Datetime'
         data = data[data[['Open', 'High', 'Low', 'Close', 'Bid_size',
                           'CloseBid', 'Ask_size', 'CloseAsk']].sum(axis=1) != 0]
+
     return data
 
 
@@ -136,6 +147,74 @@ def retrieve_quote(symbol, end_date: str, exp: str, interval: str, right: str, s
     start_time = str(convert_time_to_miliseconds(start_time))
     end_time = str(convert_time_to_miliseconds(end_time))
     url = "http://127.0.0.1:25510/v2/hist/option/quote?"
+    querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl, "right": right,
+                   "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False, 'end_time': end_time}
+    headers = {"Accept": "application/json"}
+    response = requests.get(url, headers=headers, params=querystring)
+    # print(response.url) if print_url else None
+    data = pd.read_csv(StringIO(response.text))
+    data['midpoint'] = data[['bid', 'ask']].sum(axis=1)/2
+    data['weighted_midpoint'] = ((data['ask_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (
+        data['ask'])) + ((data['bid_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (data['bid']))
+    data.rename(columns={x: x.capitalize()
+                for x in data.columns}, inplace=True)
+    # # print(data.columns)
+    data['time'] = data['Ms_of_day'].apply(convert_milliseconds)
+    data['Date2'] = pd.to_datetime(data.Date.astype(
+        str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+    data['Date3'] = data.Date2 + ' ' + data.time
+    data['datetime'] = pd.to_datetime(data.Date3)
+    data.set_index('datetime', inplace=True)
+    data.drop(columns=['time', 'Date2', 'Date3', 'Ms_of_day'], inplace=True)
+
+    return data
+
+
+def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float,  print_url=False):
+    """
+    Interval size in miliseconds. 1 minute is 6000
+    """
+    assert isinstance(
+        strike, float), f'strike should be type float, recieved {type(strike)}'
+    end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
+    exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
+    start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
+    strike *= 1000
+    strike = int(strike)
+    url = "http://127.0.0.1:25510/v2/hist/option/open_interest?"
+    querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "right": right,
+                   "start_date": start_date, "strike": strike, 'rth': False}
+    headers = {"Accept": "application/json"}
+    response = requests.get(url, headers=headers, params=querystring)
+    print(response.url) if print_url else None
+    data = pd.read_csv(StringIO(response.text))
+    data.rename(columns={x: x.capitalize()
+                for x in data.columns}, inplace=True)
+    # # # print(data.columns)
+    data['time'] = data['Ms_of_day'].apply(convert_milliseconds)
+    data['Date2'] = pd.to_datetime(data.Date.astype(
+        str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+    data['Date3'] = data.Date2
+    data['Datetime'] = pd.to_datetime(data.Date3)
+    data.drop(columns=['time', 'Date2', 'Date3', 'Ms_of_day'], inplace=True)
+    return data
+
+
+def retrieve_quote_rt(symbol, end_date: str, exp: str, interval: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00'):
+    """
+    Interval size in miliseconds. 1 minute is 6000
+    """
+    assert isinstance(
+        strike, float), f'strike should be type float, recieved {type(strike)}'
+    end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
+    exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
+    ivl = identify_length(*extract_numeric_value(interval), rt=True)*60000
+    start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
+    strike *= 1000
+    strike = int(strike)
+    start_time = str(convert_time_to_miliseconds(start_time))
+    end_time = str(convert_time_to_miliseconds(end_time))
+    url = "http://127.0.0.1:25510/v2/snapshot/option/quote?"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl, "right": right,
                    "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False, 'end_time': end_time}
     headers = {"Accept": "application/json"}

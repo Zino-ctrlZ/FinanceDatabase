@@ -1,3 +1,5 @@
+from trade.assets.Calculate import Calculate
+from trade.assets.Option import Option
 import numpy as np
 import logging
 from sqlalchemy.exc import SQLAlchemyError
@@ -18,8 +20,6 @@ sql_user = os.environ.get('MYSQL_USER')
 sql_user
 sys.path.append(
     os.environ.get('WORK_DIR'))
-from trade.assets.Option import Option
-from trade.assets.Calculate import Calculate
 
 """
 This module is responsible for organizing all functions necessary for accessing/retrieving data from SQL Database
@@ -41,15 +41,36 @@ def store_SQL_data(db, sql_table_name, data, if_exists='append'):
     data.to_sql(sql_table_name, engine, if_exists=if_exists, index=False)
     print('Data successfully saved')
 
-def drop_SQL_Table_Duplicates(db, sql_table_name, data, if_exists = 'append'):
+
+def drop_SQL_Table_Duplicates(db, sql_table_name):
     # RE-QUERY WHOLE DATA
     df = query_database(db, sql_table_name, f"SELECT * FROM {sql_table_name}")
 
     # DROP DUPLICATES OF WHOLE DATA
     df = df.drop_duplicates()
+    range_ = list(range(0, len(df), 10000),)
+    range_.append(len(df))
 
+    # Implementing a batch save
+    for i, i2 in enumerate(list(range(0, len(df), 10000)), start=1):
+        start = i2
+        end = i
+        if start != range_[-1]:
+            if i != 1:
+                print(i2+1, range_[i])
+                start, end = i2+1, range_[i]
+            else:
+                print(i2, range_[i])
+                start, end = i2, range_[i]
+        else:
+            print(i2, range_[-1])
+            start, end = i2, range_[-1]
+        use_df = df.iloc[start:end+1, :]
+        if i == 1:
+            store_SQL_data(db, sql_table_name, use_df, if_exists='replace')
+        else:
+            store_SQL_data(db, sql_table_name, use_df, if_exists='append')
     # REPLACE INITIAL TABLE WITH NON DUPLICATED TABLE
-    df.to_sql(sql_table_name, engine, if_exists='replace', index=False)
     print('Duplicates succesfully dropped')
 
 
