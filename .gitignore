@@ -1,5 +1,6 @@
-\fdbenv
+\finenv
 \.env
+.DS_Strore
 *.pyc
 .env
 2022_positions.xlsx
@@ -41,3 +42,7 @@ trade/helpers/__pycache__/helper.cpython-311.pyc
 **/.ipynb_checkpoints/
 
 
+
+.*-*-*.pyc
+*_*_*.pyc
+*__*__*-*.pyc
