@@ -1,11 +1,6 @@
-from trade.assets.Calculate import Calculate
-from trade.assets.Option import Option
-import numpy as np
 import logging
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, Date, Float, Boolean, Enum, Time, DateTime, TIMESTAMP, PrimaryKeyConstraint
-from sqlalchemy import create_engine
-import mysql.connector
 import sys
 import pandas as pd
 import mysql.connector
@@ -28,7 +23,7 @@ This module is responsible for organizing all functions necessary for accessing/
 
 # Inside the imported module
 logger = logging.getLogger(__name__)  # Using a module-specific logger
-logger.error('An error occurred in the module')
+# logger.error('An error occurred in the module')
 logger.propagate = True  # Ensure it propagates to the root logger
 
 

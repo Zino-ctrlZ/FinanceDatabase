@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(
     os.environ.get('WORK_DIR'))
-from trade.helpers.helper import pad_string
+sys.path.append(os.environ.get('TRADE_PKG_DIR'))
 from trade.helpers.Logging import setup_logger
 
 import requests
@@ -305,23 +305,59 @@ def quote_snapshot(symbol):
 
 
 def list_contracts(symbol, start_date):
-    start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     url = "http://127.0.0.1:25510/v2/list/contracts/option/trade"
     querystring = {"start_date": start_date,
                    "root": symbol,  "use_csv": "true"}
     headers = {"Accept": "application/json"}
     response = requests.get(url, headers=headers, params=querystring)
     data = pd.read_csv(StringIO(response.text))
+    if 'strike' in data.columns:
+        data['strike'] = data.strike/1000
+    return data
+
+def retrieve_ohlc(symbol, end_date: int, exp: int, ivl: int, right: str, start_date: int, strike: int):
+    """
+    Interval size in miliseconds. 1 minute is 6000
+    """
+    url = "http://127.0.0.1:25510/v2/hist/option/ohlc"
+    querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp,
+                   "ivl": ivl, "right": right, "start_date": start_date, "strike": strike}
+    headers = {"Accept": "application/json"}
+    requests.get(url, headers=headers, params=querystring)
+    data = pd.read_csv(StringIO(response.text))
     data['strike'] = data.strike/1000
     return data
 
 
-# def retrieve_ohlc(symbol, end_date: int, exp: int, ivl: int, right: str, start_date: int, strike: int):
-#     """
-#     Interval size in miliseconds. 1 minute is 6000
-#     """
-#     url = "http://127.0.0.1:25510/v2/hist/option/ohlc"
-#     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp,
-#                    "ivl": ivl, "right": right, "start_date": start_date, "strike": strike}
-#     headers = {"Accept": "application/json"}
-#     return requests.get(url, headers=headers, params=querystring)
+def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_date:str, end_date:str ): 
+    """
+        returns eod ohlc for all the days between start_date and end_date 
+        Interval is default to 3600000
+    """
+    strike = strike * 1000
+    strike = int(strike) if strike.is_integer() else strike
+    url = "http://127.0.0.1:25510/v2/hist/option/ohlc"
+    querystring = {"end_date": end_date, "root": symbol, "use_csv": "true", "exp": exp, "ivl": 3600000, "right": right, "start_date": start_date, "strike": strike}
+    headers = {"Accept": "application/json"}
+    response = requests.get(url, headers=headers, params=querystring)
+    if(__isSuccesful(response.status_code)): 
+        data = pd.read_csv(StringIO(response.text))
+        if (len(data.columns)) > 1: 
+            data['mean_volume'] = data.groupby('date')['volume'].transform('mean')
+            data = data.loc[data.groupby('date')['volume'].apply(lambda x: (x - x.mean()).abs().idxmin())]
+            data = data.drop_duplicates(subset='date', keep='last')
+            data = data.drop(columns=['mean_volume'])
+            data['date'] = pd.to_datetime(data['date'], format='%Y%m%d')
+            return data
+        else: 
+            print('Error in retrieving data: ', data) 
+            return f"No data retrieved {response.status_code}  {response.text}"
+    else: 
+        return f"{response.status_code}  {response.text}"
+    
+    
+def __isSuccesful(status_code: int): 
+    return status_code >= 200 and status_code < 300
+
+def is_theta_data_retrieval_successful(response): 
+    return type(response) != str
