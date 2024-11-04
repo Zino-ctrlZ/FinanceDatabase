@@ -109,8 +109,10 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, 
         logger.error('')
         logger.error(f'Following error for {symbol}, {exp}, {right}, {strike}')
         logger.error(
-            f'EOD OHLC mismatching dataframe size. Column says: {data.columns[0]}')
-        print('Column mismatch. Check log')
+            f'Intraday OHLC mismatching dataframe size. Column says: {data.columns[0]}')
+        logger.error('Nothing returned at all')
+        logger.error('Column mismatch. Check log')
+        return
     else:
         
 
@@ -163,7 +165,9 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: i
         logger.error(f'Following error for {symbol}, {exp}, {right}, {strike}')
         logger.error(
             f'EOD OHLC mismatching dataframe size. Column says: {data.columns[0]}')
-        print('Column mismatch. Check log')
+        logger.error('Nothing returned at all')
+        logger.error('Column mismatch. Check log')
+        return
     else:
 
         data['midpoint'] = data[['bid', 'ask']].sum(axis=1)/2
@@ -257,6 +261,14 @@ def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int,
     response = requests.get(url, headers=headers, params=querystring)
     # print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text))
+    if len(data.columns) == 1:
+        logger.error('')
+        logger.error(f'Following error for {symbol}, {exp}, {right}, {strike}')
+        logger.error(
+            f'EOD OHLC mismatching dataframe size. Response: {data.columns[0]}')
+        logger.error(f'No data returned at all')
+        print('Column mismatch. Check log')
+        return
     data['midpoint'] = data[['bid', 'ask']].sum(axis=1)/2
     data['weighted_midpoint'] = ((data['ask_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (
         data['ask'])) + ((data['bid_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (data['bid']))

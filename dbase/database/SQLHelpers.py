@@ -2,6 +2,11 @@
 # from trade.assets.Option import Option
 import numpy as np
 import logging
+import sys, os
+from dotenv import load_dotenv  
+load_dotenv()
+sys.path.extend(
+    [ os.environ.get('DBASE_DIR'),  os.environ.get('WORK_DIR')])
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, Date, Float, Boolean, Enum, Time, DateTime, TIMESTAMP, PrimaryKeyConstraint
 from sqlalchemy import create_engine, text
@@ -9,6 +14,7 @@ from mysql.connector import Error
 import sys
 import pandas as pd
 from datetime import datetime
+from trade.helpers.helper import setup_logger
 import mysql.connector
 import os
 from dotenv import load_dotenv
@@ -26,10 +32,11 @@ This module is responsible for organizing all functions necessary for accessing/
 """
 
 # Inside the imported module
-logger = logging.getLogger(__name__)  # Using a module-specific logger
-logger.error('An error occurred in the module')
-logger.propagate = True  # Ensure it propagates to the root logger
+# logger = logging.getLogger(__name__)  # Using a module-specific logger
+# logger.error('An error occurred in the module')
+# logger.propagate = True  # Ensure it propagates to the root logger
 
+logger = setup_logger('SQLHelpers.py')  # Using a module-specific logger
 
 def create_engine_short(db):
     return create_engine(f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}")
