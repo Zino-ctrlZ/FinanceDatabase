@@ -5,6 +5,7 @@ load_dotenv()
 sys.path.append(
     os.environ.get('WORK_DIR'))
 sys.path.append(os.environ.get('TRADE_PKG_DIR'))
+sys.path.append(os.environ.get('DBASE_DIR'))
 from trade.helpers.Logging import setup_logger
 
 import requests

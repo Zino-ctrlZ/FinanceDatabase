@@ -3,6 +3,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, Date, Float, Boolean, Enum, Time, DateTime, TIMESTAMP, PrimaryKeyConstraint
 import sys
 import pandas as pd
+
 import mysql.connector
 import os
 from dotenv import load_dotenv
@@ -13,9 +14,9 @@ sql_port = (os.environ.get('MYSQL_PORT'))
 sql_user = os.environ.get('MYSQL_USER')
 sql_user
 sys.path.append(
-    os.environ.get('WORK_DIR'))
+    os.environ)
 
-
+sys.path.append(os.environ.get('DBASE_DIR'))
 
 """
 This module is responsible for organizing all functions necessary for accessing/retrieving data from SQL Database
