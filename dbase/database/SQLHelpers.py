@@ -1,9 +1,17 @@
 import logging
+import sys, os
+from dotenv import load_dotenv  
+load_dotenv()
+sys.path.extend(
+    [ os.environ.get('DBASE_DIR'),  os.environ.get('WORK_DIR')])
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, Date, Float, Boolean, Enum, Time, DateTime, TIMESTAMP, PrimaryKeyConstraint
+from sqlalchemy import create_engine, text
+from mysql.connector import Error
 import sys
 import pandas as pd
-
+from datetime import datetime
+from trade.helpers.helper import setup_logger
 import mysql.connector
 import os
 from dotenv import load_dotenv
@@ -23,10 +31,11 @@ This module is responsible for organizing all functions necessary for accessing/
 """
 
 # Inside the imported module
-logger = logging.getLogger(__name__)  # Using a module-specific logger
-logger.error('An error occurred in the module')
-logger.propagate = True  # Ensure it propagates to the root logger
+# logger = logging.getLogger(__name__)  # Using a module-specific logger
+# logger.error('An error occurred in the module')
+# logger.propagate = True  # Ensure it propagates to the root logger
 
+logger = setup_logger('SQLHelpers.py')  # Using a module-specific logger
 
 def create_engine_short(db):
     return create_engine(f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}")
@@ -41,7 +50,8 @@ def store_SQL_data(db, sql_table_name, data, if_exists='append'):
 
 def drop_SQL_Table_Duplicates(db, sql_table_name):
     # RE-QUERY WHOLE DATA
-    df = query_database(db, sql_table_name, f"SELECT * FROM {sql_table_name}")
+    df = query_database(db, sql_table_name,
+                        f"SELECT * FROM {db}.{sql_table_name}")
 
     # DROP DUPLICATES OF WHOLE DATA
     df = df.drop_duplicates()
@@ -219,3 +229,86 @@ def create_table_from_schema(engine, table_schema):
             f"Table '{table_name}' has been created with columns: {[col.name for col in column_definitions]}")
     except SQLAlchemyError as e:
         print(f"An error occurred: {e}")
+
+
+def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
+    engine = create_engine_short(db)
+
+    with engine.begin() as connection:
+        connection.execute(text(f"""
+            CREATE TEMPORARY TABLE temp LIKE {sql_table_name};
+        """))
+
+        try:
+            data.to_sql('temp', con=connection, if_exists='append',
+                        index=False, chunksize=1000)
+            print("Data inserted into temporary table.")
+        except Exception as e:
+            print(f"Error during insertion into temp: {e}")
+
+        try:
+            result = connection.execute(text(f"""
+                INSERT IGNORE INTO {sql_table_name}
+                SELECT * FROM temp;
+            """))
+            print(f"Rows inserted into {sql_table_name}: {result.rowcount}")
+        except Exception as e:
+            print(f"Error during INSERT IGNORE: {e}")
+
+        connection.execute(text("DROP TABLE temp;"))
+
+
+def dynamic_batch_update(db, table_name, update_values, condition):
+    """
+    Update multiple columns in a table dynamically.
+
+    Parameters:
+    - engine: SQLAlchemy engine object for database connection.
+    - table_name: The name of the table to update.
+    - update_values: Dictionary of columns and their new values to update.
+    - condition: Dictionary of conditions for the WHERE clause.
+    """
+
+    engine = create_engine_short(db)
+    # Create the SET clause
+    set_clause = ", ".join([f"{col} = :{col}" for col in update_values.keys()])
+
+    # Create the WHERE clause
+    where_clause = " AND ".join(
+        [f"{col} = :cond_{col}" for col in condition.keys()])
+
+    # Prepare the query
+    query = text(f"""
+        UPDATE {table_name}
+        SET {set_clause}
+        WHERE {where_clause}
+                    """)
+
+    # Combine parameters for execution
+    params = {**update_values, **
+              {f'cond_{col}': val for col, val in condition.items()}}
+
+    with engine.begin() as conn:
+        conn.execute(query, params)
+
+def execute_query(db, table_name, query, params=None):
+    """
+    Execute a query on a specified table in the database.
+
+    Parameters:
+    - db: Database connection string.
+    - table_name: The name of the table to execute the query on.
+    - query: The SQL query to execute.
+    - params: Dictionary of parameters for the query (optional).
+    """
+
+    engine = create_engine_short(db)
+
+    # Prepare the query
+    query = text(query)
+
+    # Execute the query
+    with engine.begin() as conn:
+        conn.execute(query, params or {})
+        print("Query executed successfully.")
+

@@ -2,6 +2,44 @@
 \.env
 .DS_Strore
 *.pyc
+.env
+2022_positions.xlsx
+2023_positions.xlsx
+2023_Spreads.xlsx
+~$2023_Spreads.xlsx
+/myenv
+.venv
+trading_data3.xlsx
+/robinhood
+/Modules
+plan.txt
+plan.txt
+trash
+deprecated
+*.log
+TEST_FILES/TEST/WFA/
+*.log.*-*-*
+git_commands
+data_related/
+dbase_dne/
+Dev/
+module_edit/
+Planner/
+Randoms/
+Recap Project/
+SqlAccess/
+.DS_Store
+*.pyc
+*.csv
+*.ipynb.log
+*.py.log
+TEST_FILES/TEST/Module Tests/raw_code/logs/Options.ipynb.log
+trade/assets/__pycache__/rates.cpython-311.pyc
+trade/assets/__pycache__/Stock.cpython-311.pyc
+trade/helpers/__pycache__/helper.cpython-311.pyc
+*.ipynb_checkpoints/
+**/__pycache__/
+**/.ipynb_checkpoints/
 .*-*-*.pyc
 *_*_*.pyc
 *__*__*-*.pyc
@@ -170,3 +208,4 @@ cython_debug/
 
 
 *.log.*
+finenv
