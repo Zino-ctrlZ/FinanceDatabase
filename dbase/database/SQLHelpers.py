@@ -1,6 +1,3 @@
-# from trade.assets.Calculate import Calculate
-# from trade.assets.Option import Option
-import numpy as np
 import logging
 import sys, os
 from dotenv import load_dotenv  
@@ -25,7 +22,9 @@ sql_port = (os.environ.get('MYSQL_PORT'))
 sql_user = os.environ.get('MYSQL_USER')
 sql_user
 sys.path.append(
-    os.environ.get('WORK_DIR'))
+    os.environ)
+
+sys.path.append(os.environ.get('DBASE_DIR'))
 
 """
 This module is responsible for organizing all functions necessary for accessing/retrieving data from SQL Database
@@ -82,7 +81,7 @@ def drop_SQL_Table_Duplicates(db, sql_table_name):
     print('Duplicates succesfully dropped')
 
 
-def query_database(db, sq_table_name, query):
+def query_database(db, query):
     engine = create_engine_short(db)
     return pd.read_sql(query, engine)
 
