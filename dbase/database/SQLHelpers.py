@@ -81,7 +81,7 @@ def drop_SQL_Table_Duplicates(db, sql_table_name):
     print('Duplicates succesfully dropped')
 
 
-def query_database(db, query):
+def query_database(db, tbl_name, query):
     engine = create_engine_short(db)
     return pd.read_sql(query, engine)
 
@@ -312,3 +312,30 @@ def execute_query(db, table_name, query, params=None):
         conn.execute(query, params or {})
         print("Query executed successfully.")
 
+
+from sqlalchemy import create_engine
+from sqlalchemy.pool import QueuePool
+
+# # Configure the engine with a connection pool
+# engine = create_engine(
+#     f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}",
+#     poolclass=QueuePool,  # Use a QueuePool for connection pooling
+#     pool_size=5,          # Number of connections to maintain
+#     max_overflow=10,      # Maximum additional connections beyond pool_size
+#     pool_timeout=30,      # Wait time before giving up on a connection
+# )
+
+def query_database(db, tbl_name, query):
+
+        # Configure the engine with a connection pool
+    engine = create_engine(
+        f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}",
+        poolclass=QueuePool,  # Use a QueuePool for connection pooling
+        pool_size=20,          # Number of connections to maintain
+        max_overflow=10,      # Maximum additional connections beyond pool_size
+        pool_timeout=30,      # Wait time before giving up on a connection
+    )
+
+
+    with engine.begin() as connection:
+        return pd.read_sql(query, connection)
