@@ -17,7 +17,7 @@ import pandas as pd
 import os
 
 
-logger = setup_logger('ThetaData')
+logger = setup_logger('dbase.DataAPI.ThetaData')
 
 
 """
@@ -63,6 +63,7 @@ def list_contracts(symbol, start_date, print_url = False):
     if data.shape[0] == 0:
         logger.error(f'No contracts found for {symbol} on {start_date}')
         logger.error(f'response: {response.text}')
+        logger.info(f'Kwargs: {locals()}')
         return
     data['strike'] = data.strike/1000
     return data
@@ -103,16 +104,27 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, 
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl,
                    "right": right, "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False}
     headers = {"Accept": "application/json"}
+
+    start_timer = time.time()
     response = requests.get(url, headers=headers, params=querystring)
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+        logger.info('')
+        logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
+        logger.info(f'Response time: {end_timer - start_timer}')
+        logger.info(f'Response URL: {response.url}')
+
     print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text))
     if len(data.columns) == 1:
         logger.error('')
-        logger.error(f'Following error for {symbol}, {exp}, {right}, {strike}')
+        logger.error('Error in retrieve_ohlc')
+        logger.error(f'Following error for: {locals()}')
         logger.error(
-            f'Intraday OHLC mismatching dataframe size. Column says: {data.columns[0]}')
+            f'ThetaData Response: {data.columns[0]}')
         logger.error('Nothing returned at all')
         logger.error('Column mismatch. Check log')
+        logger.info(f'Kwargs: {locals()}')
         return
     else:
         
@@ -158,16 +170,25 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: i
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true",
                    "exp": exp, "right": right, "start_date": start_date, "strike": strike}
     headers = {"Accept": "application/json"}
+    
+    start_timer = time.time()
     response = requests.get(url, headers=headers, params=querystring)
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+        logger.info('')
+        logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
+        logger.info(f'Response time: {end_timer - start_timer}')
+        logger.info(f'Response URL: {response.url}')
+
     print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text))
     if len(data.columns) == 1:
         logger.error('')
-        logger.error(f'Following error for {symbol}, {exp}, {right}, {strike}')
+        logger.error('Error in retrieve_eod_ohlc')
+        logger.error(f'Following error for: {locals()}')
         logger.error(
-            f'EOD OHLC mismatching dataframe size. Column says: {data.columns[0]}')
+            f'ThetaData Response: {data.columns[0]}')
         logger.error('Nothing returned at all')
-        logger.error('Column mismatch. Check log')
         return
     else:
 
@@ -215,15 +236,24 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: i
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl, "right": right,
                    "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False, 'end_time': end_time}
     headers = {"Accept": "application/json"}
+    
+    start_timer = time.time()
     response = requests.get(url, headers=headers, params=querystring)
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+        logger.info('')
+        logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
+        logger.info(f'Response time: {end_timer - start_timer}')
+        logger.info(f'Response URL: {response.url}')
+
     print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text))
     if len(data.columns) == 1:
         logger.error('')
-        logger.error(f'Following error for {symbol}, {exp}, {right}, {strike}')
+        logger.error('Error in retrieve_quote_rt')
+        logger.error(f'Following error for: {locals()}')
         logger.error(
-            f'EOD OHLC mismatching dataframe size. Column says: {data.columns[0]}')
-        print('Column mismatch. Check log')
+            f'ThetaData Response: {data.columns[0]}')
     else:
         data['midpoint'] = data[['bid', 'ask']].sum(axis=1)/2
         data['weighted_midpoint'] = ((data['ask_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (
@@ -251,7 +281,7 @@ def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int,
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
     ivl = identify_length(*extract_numeric_value(interval), rt=True)*60000
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
-    strike *= 1000
+    strike = round(strike * 1000, 0)
     strike = int(strike)
     start_time = str(convert_time_to_miliseconds(start_time))
     end_time = str(convert_time_to_miliseconds(end_time))
@@ -259,15 +289,27 @@ def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int,
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl, "right": right,
                    "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False, 'end_time': end_time}
     headers = {"Accept": "application/json"}
+    
+    start_timer = time.time()
     response = requests.get(url, headers=headers, params=querystring)
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+        logger.info('')
+        logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
+        logger.info(f'Response time: {end_timer - start_timer}')
+        logger.info(f'Response URL: {response.url}')
+
+
     # print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text))
     if len(data.columns) == 1:
         logger.error('')
-        logger.error(f'Following error for {symbol}, {exp}, {right}, {strike}')
+        logger.error('Error in retrieve_quote function')
+        logger.error(f'Following error for: {locals()}')
         logger.error(
             f'EOD OHLC mismatching dataframe size. Response: {data.columns[0]}')
         logger.error(f'No data returned at all')
+        logger.info(f'Kwargs: {locals()}')
         print('Column mismatch. Check log')
         return
     data['midpoint'] = data[['bid', 'ask']].sum(axis=1)/2
@@ -302,7 +344,27 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp,"right": right,
                    "start_date": start_date, "strike": strike,'rth': False}
     headers = {"Accept": "application/json"}
+    
+    start_timer = time.time()
     response = requests.get(url, headers=headers, params=querystring)
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+        logger.info('')
+        logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
+        logger.info(f'Response time: {end_timer - start_timer}')
+        logger.info(f'Response URL: {response.url}')
+    
+    if not __isSuccesful(response.status_code):
+        logger.error('') 
+        logger.error(f'Error in retrieve_openInterest')
+        logger.error(f'Following error for: {locals()}')
+        logger.error(f'Error in retrieving data: {response.text}')
+        logger.error('Nothing returned at all')
+        logger.info(f'Kwargs: {locals()}')
+        return
+
+
+
     print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text))
     data.rename(columns={x: x.capitalize()
@@ -411,6 +473,7 @@ def quote_snapshot(symbol):
 
 
 def list_contracts(symbol, start_date):
+    start_date = pd.to_datetime(start_date).strftime('%Y%m%d')
     url = "http://127.0.0.1:25510/v2/list/contracts/option/trade"
     querystring = {"start_date": start_date,
                    "root": symbol,  "use_csv": "true"}
@@ -419,20 +482,29 @@ def list_contracts(symbol, start_date):
     data = pd.read_csv(StringIO(response.text))
     if 'strike' in data.columns:
         data['strike'] = data.strike/1000
+    
+    if not __isSuccesful(response.status_code):
+        logger.error('') 
+        logger.error(f'Error in list_contracts')
+        logger.error(f'Following error for: {locals()}')
+        logger.error(f'Error in retrieving data: {response.text}')
+        logger.error('Nothing returned at all')
+        logger.info(f'Kwargs: {locals()}')
+        return
     return data
 
-def retrieve_ohlc(symbol, end_date: int, exp: int, ivl: int, right: str, start_date: int, strike: int):
-    """
-    Interval size in miliseconds. 1 minute is 6000
-    """
-    url = "http://127.0.0.1:25510/v2/hist/option/ohlc"
-    querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp,
-                   "ivl": ivl, "right": right, "start_date": start_date, "strike": strike}
-    headers = {"Accept": "application/json"}
-    requests.get(url, headers=headers, params=querystring)
-    data = pd.read_csv(StringIO(response.text))
-    data['strike'] = data.strike/1000
-    return data
+# def retrieve_ohlc(symbol, end_date: int, exp: int, ivl: int, right: str, start_date: int, strike: int):
+#     """
+#     Interval size in miliseconds. 1 minute is 6000
+#     """
+#     url = "http://127.0.0.1:25510/v2/hist/option/ohlc"
+#     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp,
+#                    "ivl": ivl, "right": right, "start_date": start_date, "strike": strike}
+#     headers = {"Accept": "application/json"}
+#     requests.get(url, headers=headers, params=querystring)
+#     data = pd.read_csv(StringIO(response.text))
+#     data['strike'] = data.strike/1000
+#     return data
 
 
 def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_date:str, end_date:str ): 
