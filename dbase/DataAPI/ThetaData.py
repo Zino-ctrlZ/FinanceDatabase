@@ -9,12 +9,11 @@ sys.path.append(os.environ.get('DBASE_DIR'))
 from trade.helpers.Logging import setup_logger
 
 import requests
-import time
 import re
 from io import StringIO
-import numpy as np
 import pandas as pd
 import os
+import json
 
 
 logger = setup_logger('ThetaData')
@@ -25,41 +24,72 @@ This Module is responsible for organizing all functions related to accessing dat
 
 """
 
-def greek_snapshot(symbol):
+def request_from_proxy(thetaUrl, queryparam, instanceUrl): 
+    request_string = f"{thetaUrl}?{'&'.join([f'{key}={value}' for key, value in queryparam.items()])}" 
+    payload = json.dumps({
+    "url": request_string,
+    "method": "GET",
+    })
+    headers = {
+        'Content-Type': 'application/json'
+    }
+    response = requests.request("POST", instanceUrl, headers=headers, data=payload)
+    return response
+
+def greek_snapshot(symbol, proxy=None):
     url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/greeks"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
-    return requests.get(url, headers=headers, params=querystring)
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
 
-def ohlc_snapshot(symbol):
+def ohlc_snapshot(symbol, proxy = None):
     url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/ohlc"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
-    return requests.get(url, headers=headers, params=querystring)
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
 
-def open_interest_snapshot(symbol):
+def open_interest_snapshot(symbol, proxy = None):
     url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/quote"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
-    return pd.read_csv(StringIO(requests.get(url, headers=headers, params=querystring)))
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
 
-def quote_snapshot(symbol):
+def quote_snapshot(symbol, proxy = None):
     url = "http://127.0.0.1:25510/v2/snapshot/option/quote"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
-    return pd.read_csv(StringIO(requests.get(url, headers=headers, params=querystring)))
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
-def list_contracts(symbol, start_date, print_url = False):
+def list_contracts(symbol, start_date, print_url = False, proxy = None):
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     url = "http://127.0.0.1:25510/v2/list/contracts/option/trade"
     querystring = {"start_date": start_date ,"root": symbol,  "use_csv": "true"}
     headers = {"Accept": "application/json"}
-    response = requests.get(url, headers=headers, params=querystring)
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
     print(response.url) if print_url else None
-    data = pd.read_csv(StringIO(response.text))
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if data.shape[0] == 0:
         logger.error(f'No contracts found for {symbol} on {start_date}')
         logger.error(f'response: {response.text}')
@@ -85,9 +115,10 @@ def extract_numeric_value(timeframe_str):
     return strings, integers
 
 
-def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False):
+def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, proxy: str = None):
     """
     Interval size in miliseconds. 1 minute is 6000
+    proxy the endpoint to the proxy server http://<ip>:<port>/thetadata
     """
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
     interval = '1h'
@@ -103,9 +134,13 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, 
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl,
                    "right": right, "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False}
     headers = {"Accept": "application/json"}
-    response = requests.get(url, headers=headers, params=querystring)
+    #use proxy option
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
     print(response.url) if print_url else None
-    data = pd.read_csv(StringIO(response.text))
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if len(data.columns) == 1:
         logger.error('')
         logger.error(f'Following error for {symbol}, {exp}, {right}, {strike}')
@@ -115,12 +150,15 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, 
         logger.error('Column mismatch. Check log')
         return
     else:
-        
 
         data.rename(columns={x: x.capitalize()
                     for x in data.columns}, inplace=True)
         data['time'] = data.Ms_of_day.apply(lambda c: convert_milliseconds(c))
-        quote_data = retrieve_quote(symbol, end_og, exp_og, right,start_og ,strike_og)
+        #use proxy option
+        if proxy:
+            quote_data = retrieve_quote(symbol, end_og, exp_og, right,start_og ,strike_og, proxy = proxy)
+        else: 
+            quote_data = retrieve_quote(symbol, end_og, exp_og, right,start_og ,strike_og)
         data = data.merge(quote_data[['Date', 'time', 'Ask_size', 'Ask', 'Bid', 'Bid_size', 'Weighted_midpoint','Midpoint']], on = ['Date', 'time'], how = 'left')
         data.rename(columns = {
             'Ask': 'CloseAsk',
@@ -144,7 +182,7 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, 
     return data
 
 
-def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, print_url=False, rt=True):
+def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, print_url=False, rt=True, proxy = None):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -158,9 +196,12 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: i
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true",
                    "exp": exp, "right": right, "start_date": start_date, "strike": strike}
     headers = {"Accept": "application/json"}
-    response = requests.get(url, headers=headers, params=querystring)
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
     print(response.url) if print_url else None
-    data = pd.read_csv(StringIO(response.text))
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if len(data.columns) == 1:
         logger.error('')
         logger.error(f'Following error for {symbol}, {exp}, {right}, {strike}')
@@ -197,7 +238,7 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: i
 
 
 
-def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', ts = False):
+def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', ts = False, proxy = None):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -215,9 +256,12 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: i
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl, "right": right,
                    "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False, 'end_time': end_time}
     headers = {"Accept": "application/json"}
-    response = requests.get(url, headers=headers, params=querystring)
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
     print(response.url) if print_url else None
-    data = pd.read_csv(StringIO(response.text))
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if len(data.columns) == 1:
         logger.error('')
         logger.error(f'Following error for {symbol}, {exp}, {right}, {strike}')
@@ -241,7 +285,7 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: i
 
     return data
 
-def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00'):
+def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', proxy = None):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -255,13 +299,16 @@ def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int,
     strike = int(strike)
     start_time = str(convert_time_to_miliseconds(start_time))
     end_time = str(convert_time_to_miliseconds(end_time))
-    url = "http://127.0.0.1:25510/v2/hist/option/quote?"
+    url = "http://127.0.0.1:25510/v2/hist/option/quote"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl, "right": right,
                    "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False, 'end_time': end_time}
     headers = {"Accept": "application/json"}
-    response = requests.get(url, headers=headers, params=querystring)
-    # print(response.url) if print_url else None
-    data = pd.read_csv(StringIO(response.text))
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+    print(response.url) if print_url else None
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if len(data.columns) == 1:
         logger.error('')
         logger.error(f'Following error for {symbol}, {exp}, {right}, {strike}')
@@ -288,7 +335,7 @@ def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int,
 
 
 
-def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float,  print_url=False):
+def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float,  print_url=False, proxy = None):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -298,13 +345,16 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     strike *= 1000
     strike = int(strike)
-    url = "http://127.0.0.1:25510/v2/hist/option/open_interest?"
+    url = "http://127.0.0.1:25510/v2/hist/option/open_interest"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp,"right": right,
                    "start_date": start_date, "strike": strike,'rth': False}
     headers = {"Accept": "application/json"}
-    response = requests.get(url, headers=headers, params=querystring)
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
     print(response.url) if print_url else None
-    data = pd.read_csv(StringIO(response.text))
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     data.rename(columns={x: x.capitalize()
                 for x in data.columns}, inplace=True)
     # # # print(data.columns)
@@ -382,60 +432,7 @@ def convert_time_to_miliseconds(time):
     return hour + minute + secs + mili
 
 
-def greek_snapshot(symbol):
-    url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/greeks"
-    querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
-    headers = {"Accept": "application/json"}
-    return requests.get(url, headers=headers, params=querystring)
-
-
-def ohlc_snapshot(symbol):
-    url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/ohlc"
-    querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
-    headers = {"Accept": "application/json"}
-    return requests.get(url, headers=headers, params=querystring)
-
-
-def open_interest_snapshot(symbol):
-    url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/quote"
-    querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
-    headers = {"Accept": "application/json"}
-    return requests.get(url, headers=headers, params=querystring)
-
-
-def quote_snapshot(symbol):
-    url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/quote"
-    querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
-    headers = {"Accept": "application/json"}
-    return requests.get(url, headers=headers, params=querystring)
-
-
-def list_contracts(symbol, start_date):
-    url = "http://127.0.0.1:25510/v2/list/contracts/option/trade"
-    querystring = {"start_date": start_date,
-                   "root": symbol,  "use_csv": "true"}
-    headers = {"Accept": "application/json"}
-    response = requests.get(url, headers=headers, params=querystring)
-    data = pd.read_csv(StringIO(response.text))
-    if 'strike' in data.columns:
-        data['strike'] = data.strike/1000
-    return data
-
-def retrieve_ohlc(symbol, end_date: int, exp: int, ivl: int, right: str, start_date: int, strike: int):
-    """
-    Interval size in miliseconds. 1 minute is 6000
-    """
-    url = "http://127.0.0.1:25510/v2/hist/option/ohlc"
-    querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp,
-                   "ivl": ivl, "right": right, "start_date": start_date, "strike": strike}
-    headers = {"Accept": "application/json"}
-    requests.get(url, headers=headers, params=querystring)
-    data = pd.read_csv(StringIO(response.text))
-    data['strike'] = data.strike/1000
-    return data
-
-
-def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_date:str, end_date:str ): 
+def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_date:str, end_date:str, proxy = None ): 
     """
         returns eod ohlc for all the days between start_date and end_date 
         Interval is default to 3600000
@@ -445,9 +442,12 @@ def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_
     url = "http://127.0.0.1:25510/v2/hist/option/ohlc"
     querystring = {"end_date": end_date, "root": symbol, "use_csv": "true", "exp": exp, "ivl": 3600000, "right": right, "start_date": start_date, "strike": strike}
     headers = {"Accept": "application/json"}
-    response = requests.get(url, headers=headers, params=querystring)
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if(__isSuccesful(response.status_code)): 
-        data = pd.read_csv(StringIO(response.text))
         if (len(data.columns)) > 1: 
             data['mean_volume'] = data.groupby('date')['volume'].transform('mean')
             data = data.loc[data.groupby('date')['volume'].apply(lambda x: (x - x.mean()).abs().idxmin())]
