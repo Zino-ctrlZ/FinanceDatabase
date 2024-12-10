@@ -252,7 +252,7 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: i
     strike = int(strike)
     start_time = str(convert_time_to_miliseconds(start_time))
     end_time = str(convert_time_to_miliseconds(end_time))
-    url = "http://127.0.0.1:25510/v2/snapshot/option/quote?" if not ts else "http://127.0.0.1:25510/v2/hist/option/quote?"
+    url = "http://127.0.0.1:25510/v2/snapshot/option/quote" if not ts else "http://127.0.0.1:25510/v2/hist/option/quote"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl, "right": right,
                    "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False, 'end_time': end_time}
     headers = {"Accept": "application/json"}

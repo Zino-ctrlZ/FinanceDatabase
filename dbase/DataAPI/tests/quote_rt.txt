@@ -1,0 +1,1 @@
+{"columns":["Bid_size","Bid_exchange","Bid","Bid_condition","Ask_size","Ask_exchange","Ask","Ask_condition","Midpoint","Weighted_midpoint"],"index":[1733759999000],"data":[[295,46,0.33,50,176,69,0.35,50,0.34,0.3374734607]]}
