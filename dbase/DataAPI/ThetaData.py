@@ -16,7 +16,8 @@ import numpy as np
 import pandas as pd
 import os
 
-
+    ##To-Do: Add a data cleaning function to remove zeros and inf and check for other anomalies. 
+    ## In the function, add a logger to log the anomalies
 logger = setup_logger('dbase.DataAPI.ThetaData')
 
 
@@ -472,16 +473,6 @@ def quote_snapshot(symbol):
     return requests.get(url, headers=headers, params=querystring)
 
 
-def list_contracts(symbol, start_date):
-    start_date = pd.to_datetime(start_date).strftime('%Y%m%d')
-    url = "http://127.0.0.1:25510/v2/list/contracts/option/trade"
-    querystring = {"start_date": start_date,
-                   "root": symbol,  "use_csv": "true"}
-    headers = {"Accept": "application/json"}
-    response = requests.get(url, headers=headers, params=querystring)
-    data = pd.read_csv(StringIO(response.text))
-    if 'strike' in data.columns:
-        data['strike'] = data.strike/1000
     
     if not __isSuccesful(response.status_code):
         logger.error('') 
