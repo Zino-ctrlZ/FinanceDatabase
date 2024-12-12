@@ -45,7 +45,7 @@ def store_SQL_data(db, sql_table_name, data, if_exists='append'):
     # ADD INITIAL DATA TO DATABASE
     engine = create_engine_short(db)
     data.to_sql(sql_table_name, engine, if_exists=if_exists, index=False)
-    print('Data successfully saved')
+    print('Data successfully saved', end = '\r')
 
 
 def drop_SQL_Table_Duplicates(db, sql_table_name):
@@ -78,7 +78,7 @@ def drop_SQL_Table_Duplicates(db, sql_table_name):
         else:
             store_SQL_data(db, sql_table_name, use_df, if_exists='append')
     # REPLACE INITIAL TABLE WITH NON DUPLICATED TABLE
-    print('Duplicates succesfully dropped')
+    print('Duplicates succesfully dropped', end = '\r')
 
 
 def query_database(db, tbl_name, query):
@@ -98,7 +98,7 @@ def create_SQL_connection():
             user=sql_user,         # Your MySQL username
             password=sql_pw     # Your MySQL password
         )
-        print("Successfully connected to the database")
+        print("Successfully connected to the database", end = '\r')
     except mysql.connector.Error as err:
         print(err.errno)
         print(err.msg)
@@ -110,7 +110,7 @@ def close_SQL_connection(connection, cursor=None):
     if connection.is_connected():
         cursor.close() if cursor else None
         connection.close()
-        print("MySQL connection is closed")
+        print("MySQL connection is closed", end = '\r')
 
 
 def create_SQL_database(connection, db_name):
@@ -122,7 +122,7 @@ def create_SQL_database(connection, db_name):
         print("Failed creating database: {}".format(err))
         exit(1)
     connection.commit()
-    print("Database created successfully")
+    print("Database created successfully", end = '\r')
     close_SQL_connection(connection, cursor)
 
 
@@ -226,7 +226,7 @@ def create_table_from_schema(engine, table_schema):
     try:
         metadata.create_all(engine)
         print(
-            f"Table '{table_name}' has been created with columns: {[col.name for col in column_definitions]}")
+            f"Table '{table_name}' has been created with columns: {[col.name for col in column_definitions]}", end = '\r')
     except SQLAlchemyError as e:
         print(f"An error occurred: {e}")
 
@@ -242,7 +242,7 @@ def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
         try:
             data.to_sql('temp', con=connection, if_exists='append',
                         index=False, chunksize=1000)
-            print("Data inserted into temporary table.")
+            print("Data inserted into temporary table.", end = '\r')
         except Exception as e:
             print(f"Error during insertion into temp: {e}")
 
@@ -251,7 +251,7 @@ def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
                 INSERT IGNORE INTO {sql_table_name}
                 SELECT * FROM temp;
             """))
-            print(f"Rows inserted into {sql_table_name}: {result.rowcount}")
+            print(f"Rows inserted into {sql_table_name}: {result.rowcount}", end = '\r')
         except Exception as e:
             print(f"Error during INSERT IGNORE: {e}")
 
@@ -310,32 +310,85 @@ def execute_query(db, table_name, query, params=None):
     # Execute the query
     with engine.begin() as conn:
         conn.execute(query, params or {})
-        print("Query executed successfully.")
+        print("Query executed successfully.", end = '\r')
 
 
-from sqlalchemy import create_engine
-from sqlalchemy.pool import QueuePool
 
-# # Configure the engine with a connection pool
-# engine = create_engine(
-#     f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}",
-#     poolclass=QueuePool,  # Use a QueuePool for connection pooling
-#     pool_size=5,          # Number of connections to maintain
-#     max_overflow=10,      # Maximum additional connections beyond pool_size
-#     pool_timeout=30,      # Wait time before giving up on a connection
-# )
+class DatabaseAdapter:
 
-def query_database(db, tbl_name, query):
+    def __init__(self):
+        pass
 
-        # Configure the engine with a connection pool
-    engine = create_engine(
-        f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}",
-        poolclass=QueuePool,  # Use a QueuePool for connection pooling
-        pool_size=20,          # Number of connections to maintain
-        max_overflow=10,      # Maximum additional connections beyond pool_size
-        pool_timeout=30,      # Wait time before giving up on a connection
-    )
+    def save_to_database(self, data, db, table_name):
+        data = self.__filter_data(data)
+        store_SQL_data_Insert_Ignore(db, table_name, data)
+
+    def query_database(self, db, table_name, query):
+        data = query_database(db, table_name, query)
+        return data
+
+    def __filter_data(self, data):
+
+        ## To-doL Add a warning log here for dropping second duplicate columns
+        data.columns = [col.lower() for col in data.columns]
+
+        ## Filter duplicate data
+        data = data.drop_duplicates()
+
+        ## Use to check if there are duplicates
+        # if 'option_tick' in data.columns:
+        #     print('Duplicated Rows',len(data[['build_date', 'option_tick']].duplicated()), '                   ')
+        #     if len(data[['build_date', 'option_tick']].duplicated()) > 0:
+        #         print('Dropped Duplicates')
+        #         data = data.drop_duplicates()
+        #         print(data[['build_date', 'option_tick']].duplicated())
+
+        #     if 'spot' not in data.columns:
+        #         print('Spot not in columns')
+        #     else:
+        #         print('Spot in columns')
+
+        ## Ensure no null values
+        data = data.dropna()
 
 
-    with engine.begin() as connection:
-        return pd.read_sql(query, connection)
+        ## Ensure no duplicate columns
+        data.columns = data.columns.str.lower()
+        occurence = dict(zip(data.columns, [0 for _ in range(len(data.columns))]))
+        ## Tag only second columns of duplicated
+        for j, i in enumerate(data.columns):
+            occurence[i] += 1
+            if occurence[i] > 1:
+                data.columns.values[j] = f"{i}_dup"
+        dup_names = [x for x in data.columns if 'dup' in x]
+        data.drop(columns = dup_names, inplace = True)
+
+        return data
+
+
+# from sqlalchemy import create_engine
+# from sqlalchemy.pool import QueuePool
+
+# # # Configure the engine with a connection pool
+# # engine = create_engine(
+# #     f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}",
+# #     poolclass=QueuePool,  # Use a QueuePool for connection pooling
+# #     pool_size=5,          # Number of connections to maintain
+# #     max_overflow=10,      # Maximum additional connections beyond pool_size
+# #     pool_timeout=30,      # Wait time before giving up on a connection
+# # )
+
+# def query_database(db, tbl_name, query):
+
+#         # Configure the engine with a connection pool
+#     engine = create_engine(
+#         f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}",
+#         poolclass=QueuePool,  # Use a QueuePool for connection pooling
+#         pool_size=20,          # Number of connections to maintain
+#         max_overflow=10,      # Maximum additional connections beyond pool_size
+#         pool_timeout=30,      # Wait time before giving up on a connection
+#     )
+
+
+#     with engine.begin() as connection:
+#         return pd.read_sql(query, connection)
