@@ -17,7 +17,7 @@ import json
 
 
 logger = setup_logger('ThetaData')
-
+proxy_url = os.environ.get('PROXY_URL') if os.environ.get('PROXY_URL') else None
 
 """
 This Module is responsible for organizing all functions related to accessing data from ThetaData Vendor
@@ -36,7 +36,7 @@ def request_from_proxy(thetaUrl, queryparam, instanceUrl):
     response = requests.request("POST", instanceUrl, headers=headers, data=payload)
     return response
 
-def greek_snapshot(symbol, proxy=None):
+def greek_snapshot(symbol, proxy=proxy_url):
     url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/greeks"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
@@ -47,7 +47,7 @@ def greek_snapshot(symbol, proxy=None):
     return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
 
-def ohlc_snapshot(symbol, proxy = None):
+def ohlc_snapshot(symbol, proxy = proxy_url):
     url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/ohlc"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
@@ -58,7 +58,7 @@ def ohlc_snapshot(symbol, proxy = None):
     return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
 
-def open_interest_snapshot(symbol, proxy = None):
+def open_interest_snapshot(symbol, proxy = proxy_url):
     url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/quote"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
@@ -69,7 +69,7 @@ def open_interest_snapshot(symbol, proxy = None):
     return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
 
-def quote_snapshot(symbol, proxy = None):
+def quote_snapshot(symbol, proxy = proxy_url):
     url = "http://127.0.0.1:25510/v2/snapshot/option/quote"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
@@ -79,7 +79,7 @@ def quote_snapshot(symbol, proxy = None):
         response = requests.get(url, headers=headers, params=querystring)
     return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
-def list_contracts(symbol, start_date, print_url = False, proxy = None):
+def list_contracts(symbol, start_date, print_url = False, proxy = proxy_url):
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     url = "http://127.0.0.1:25510/v2/list/contracts/option/trade"
     querystring = {"start_date": start_date ,"root": symbol,  "use_csv": "true"}
@@ -115,7 +115,7 @@ def extract_numeric_value(timeframe_str):
     return strings, integers
 
 
-def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, proxy: str = None):
+def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, proxy: str = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     proxy the endpoint to the proxy server http://<ip>:<port>/thetadata
@@ -182,7 +182,7 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, 
     return data
 
 
-def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, print_url=False, rt=True, proxy = None):
+def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, print_url=False, rt=True, proxy = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -238,7 +238,7 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: i
 
 
 
-def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', ts = False, proxy = None):
+def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', ts = False, proxy = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -285,7 +285,7 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: i
 
     return data
 
-def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', proxy = None):
+def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', proxy = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -335,7 +335,7 @@ def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int,
 
 
 
-def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float,  print_url=False, proxy = None):
+def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float,  print_url=False, proxy = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -432,7 +432,7 @@ def convert_time_to_miliseconds(time):
     return hour + minute + secs + mili
 
 
-def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_date:str, end_date:str, proxy = None ): 
+def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_date:str, end_date:str, proxy = proxy_url ): 
     """
         returns eod ohlc for all the days between start_date and end_date 
         Interval is default to 3600000
