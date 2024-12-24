@@ -21,6 +21,9 @@ import json
 logger = setup_logger('dbase.DataAPI.ThetaData')
 proxy_url = os.environ.get('PROXY_URL') if os.environ.get('PROXY_URL') else None
 
+if proxy_url is None:
+    print('No Proxy URL found. ThetaData API will default to direct access')
+
 """
 This Module is responsible for organizing all functions related to accessing data from ThetaData Vendor
 
