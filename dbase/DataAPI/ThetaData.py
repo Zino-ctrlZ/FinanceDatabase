@@ -22,6 +22,9 @@ import json
 logger = setup_logger('dbase.DataAPI.ThetaData')
 proxy_url = os.environ.get('PROXY_URL') if os.environ.get('PROXY_URL') else None
 
+if proxy_url is None:
+    print('No Proxy URL found. ThetaData API will default to direct access')
+
 """
 This Module is responsible for organizing all functions related to accessing data from ThetaData Vendor
 
@@ -119,7 +122,7 @@ def extract_numeric_value(timeframe_str):
     return strings, integers
 
 
-def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, proxy: str = proxy_url):
+def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = '9:30', print_url=False, proxy: str = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     proxy the endpoint to the proxy server http://<ip>:<port>/thetadata
@@ -198,7 +201,7 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, 
     return data
 
 
-def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, print_url=False, rt=True, proxy = proxy_url):
+def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, print_url=False, rt=True, proxy = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -264,7 +267,7 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: i
 
 
 
-def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', ts = False, proxy = proxy_url):
+def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', ts = False, proxy = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -321,7 +324,7 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: i
 
     return data
 
-def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', proxy = proxy_url):
+def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', proxy = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -386,7 +389,7 @@ def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: int,
 
 
 
-def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: int, strike: float,  print_url=False, proxy = proxy_url):
+def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float,  print_url=False, proxy = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
