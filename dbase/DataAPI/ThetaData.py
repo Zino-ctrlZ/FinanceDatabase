@@ -10,6 +10,7 @@ from trade.helpers.Logging import setup_logger
 
 import requests
 import re
+import time
 from io import StringIO
 import pandas as pd
 import os
