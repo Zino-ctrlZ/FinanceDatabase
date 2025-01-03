@@ -20,11 +20,10 @@ sql_pw = (os.environ.get('MYSQL_PASSWORD'))
 sql_host = (os.environ.get('MYSQL_HOST'))
 sql_port = (os.environ.get('MYSQL_PORT'))
 sql_user = os.environ.get('MYSQL_USER')
-sql_user
-sys.path.append(
-    os.environ)
 
 sys.path.append(os.environ.get('DBASE_DIR'))
+
+logger = setup_logger('dbase.database.SQLHelpers')
 
 """
 This module is responsible for organizing all functions necessary for accessing/retrieving data from SQL Database
