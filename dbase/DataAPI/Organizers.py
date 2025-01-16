@@ -2,10 +2,10 @@ from dotenv import load_dotenv
 load_dotenv()
 import sys, os
 sys.path.append(
-    os.environ.get('DBASE_DIR'))
+    os.environ['DBASE_DIR'])
 
 sys.path.append(
-    os.environ.get('WORK_DIR'))  # type: ignore
+    os.environ['WORK_DIR'])  # type: ignore
 from trade.assets.Calculate import Calculate
 from trade.assets.rates import get_risk_free_rate_helper
 from trade.assets.Stock import Stock

@@ -3,8 +3,8 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(
-    os.environ.get('WORK_DIR'))
-sys.path.append(os.environ.get('DBASE_DIR'))
+    os.environ['WORK_DIR'])
+sys.path.append(os.environ['DBASE_DIR'])
 from trade.helpers.Logging import setup_logger
 
 import requests
