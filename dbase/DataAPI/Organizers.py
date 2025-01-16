@@ -1,5 +1,6 @@
-
+from dotenv import load_dotenv
 load_dotenv()
+import sys, os
 sys.path.append(
     os.environ.get('DBASE_DIR'))
 
