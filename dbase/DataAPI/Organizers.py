@@ -1,18 +1,23 @@
+from dotenv import load_dotenv
+load_dotenv()
+import sys, os
+sys.path.append(
+    os.environ['DBASE_DIR'])
 
+sys.path.append(
+    os.environ['WORK_DIR'])  # type: ignore
 from trade.assets.Calculate import Calculate
 from trade.assets.rates import get_risk_free_rate_helper
 from trade.assets.Stock import Stock
+from trade.helpers.Logging import setup_logger
 from dbase.DataAPI.ThetaData import *
 import numpy as np
 import pandas as pd
 from trade.helpers.helper import *
 from dotenv import load_dotenv
-load_dotenv()
-sys.path.append(
-    os.environ.get('DBASE_DIR'))
 
-sys.path.append(
-    os.environ.get('WORK_DIR'))  # type: ignore
+
+logger = setup_logger('dbase.DataAPI.Organizers')
 """
 This module carries out all function related to organizing market retrieved from various vendors
 

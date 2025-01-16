@@ -3,7 +3,7 @@ import sys, os
 from dotenv import load_dotenv  
 load_dotenv()
 sys.path.extend(
-    [ os.environ.get('DBASE_DIR'),  os.environ.get('WORK_DIR')])
+    [ os.environ['DBASE_DIR'],  os.environ['WORK_DIR']])
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, Date, Float, Boolean, Enum, Time, DateTime, TIMESTAMP, PrimaryKeyConstraint
 from sqlalchemy import create_engine, text
@@ -20,11 +20,10 @@ sql_pw = (os.environ.get('MYSQL_PASSWORD'))
 sql_host = (os.environ.get('MYSQL_HOST'))
 sql_port = (os.environ.get('MYSQL_PORT'))
 sql_user = os.environ.get('MYSQL_USER')
-sql_user
-sys.path.append(
-    os.environ)
 
-sys.path.append(os.environ.get('DBASE_DIR'))
+sys.path.append(os.environ['DBASE_DIR'])
+
+logger = setup_logger('dbase.database.SQLHelpers')
 
 """
 This module is responsible for organizing all functions necessary for accessing/retrieving data from SQL Database

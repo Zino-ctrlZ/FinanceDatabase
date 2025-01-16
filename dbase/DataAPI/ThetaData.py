@@ -3,13 +3,13 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(
-    os.environ.get('WORK_DIR'))
-sys.path.append(os.environ.get('TRADE_PKG_DIR'))
-sys.path.append(os.environ.get('DBASE_DIR'))
+    os.environ['WORK_DIR'])
+sys.path.append(os.environ['DBASE_DIR'])
 from trade.helpers.Logging import setup_logger
 
 import requests
 import re
+import time
 from io import StringIO
 import pandas as pd
 import os
@@ -23,6 +23,8 @@ proxy_url = os.environ.get('PROXY_URL') if os.environ.get('PROXY_URL') else None
 
 if proxy_url is None:
     print('No Proxy URL found. ThetaData API will default to direct access')
+else:
+    print(f'Using Proxy URL: {proxy_url}')
 
 """
 This Module is responsible for organizing all functions related to accessing data from ThetaData Vendor
