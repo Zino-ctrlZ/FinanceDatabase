@@ -218,7 +218,14 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
     headers = {"Accept": "application/json"}
     
     start_timer = time.time()
-    response = requests.get(url, headers=headers, params=querystring)
+
+
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+
+
     end_timer = time.time()
     if (end_timer - start_timer) > 4:
         logger.info('')
@@ -226,10 +233,7 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
         logger.info(f'Response time: {end_timer - start_timer}')
         logger.info(f'Response URL: {response.url}')
 
-    if proxy:
-        response = request_from_proxy(url, querystring, proxy)
-    else:
-        response = requests.get(url, headers=headers, params=querystring)
+        
     print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if len(data.columns) == 1:
