@@ -325,11 +325,20 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: s
 
     return data
 
-def retrieve_quote(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', proxy = proxy_url):
+def retrieve_quote(symbol, 
+                   end_date: str, 
+                   exp: str, 
+                   right: str, 
+                   start_date: str, 
+                   strike: float, 
+                   start_time: str = '9:30', 
+                   print_url=False, 
+                   end_time='16:00',
+                   interval = '30m', proxy = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
-    interval = '1h'
+    
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
@@ -406,14 +415,21 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
     headers = {"Accept": "application/json"}
     
     start_timer = time.time()
-    response = requests.get(url, headers=headers, params=querystring)
     end_timer = time.time()
     if (end_timer - start_timer) > 4:
         logger.info('')
         logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
         logger.info(f'Response time: {end_timer - start_timer}')
         logger.info(f'Response URL: {response.url}')
-    
+
+
+
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+
+        
     if not __isSuccesful(response.status_code):
         logger.error('') 
         logger.error(f'Error in retrieve_openInterest')
@@ -423,12 +439,6 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
         logger.info(f'Kwargs: {locals()}')
         return
 
-
-
-    if proxy:
-        response = request_from_proxy(url, querystring, proxy)
-    else:
-        response = requests.get(url, headers=headers, params=querystring)
     print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     data.rename(columns={x: x.capitalize()
@@ -501,9 +511,9 @@ def convert_milliseconds(ms):
 
 def convert_time_to_miliseconds(time):
     time_obj = pd.to_datetime(time)
-    hour = time_obj.hour * 3600000
-    minute = time_obj.minute * 60000
-    secs = time_obj.second * 1000
+    hour = time_obj.hour * 3_600_000
+    minute = time_obj.minute * 60_000
+    secs = time_obj.second * 1_000
     mili = time_obj.microsecond
     return hour + minute + secs + mili
 
