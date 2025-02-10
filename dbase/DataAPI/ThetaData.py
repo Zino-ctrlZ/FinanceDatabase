@@ -271,7 +271,76 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
     return data
 
 
+async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, print_url=False, rt=True, proxy = proxy_url):
+    """
+    Interval size in miliseconds. 1 minute is 6000
+    """
+    assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
+    end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
+    exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
+    start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
+    strike *= 1000
+    strike = int(strike)
+    url = "http://127.0.0.1:25510/v2/hist/option/eod"
+    querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true",
+                   "exp": exp, "right": right, "start_date": start_date, "strike": strike}
+    headers = {"Accept": "application/json"}
+    
+    start_timer = time.time()
 
+
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+
+
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+        logger.info('')
+        logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
+        logger.info(f'Response time: {end_timer - start_timer}')
+        logger.info(f'Response URL: {response.url}')
+
+        
+    print(response.url) if print_url else None
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
+    if len(data.columns) == 1:
+        logger.error('')
+        logger.error('Error in retrieve_eod_ohlc')
+        logger.error(f'Following error for: {locals()}')
+        logger.error(
+            f'ThetaData Response: {data.columns[0]}')
+        logger.error('Nothing returned at all')
+        return
+    else:
+
+        data['midpoint'] = data[['bid', 'ask']].sum(axis=1)/2
+        data['weighted_midpoint'] = ((data['ask_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (
+        data['ask'])) + ((data['bid_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (data['bid']))
+        data.rename(columns={x: x.capitalize()
+                    for x in data.columns}, inplace=True)
+        
+        data['time'] = '16:00:00' if rt else ''
+        data['Date2'] = pd.to_datetime(data.Date.astype(
+            str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+        data['Date3'] = data.Date2
+        data['datetime'] = pd.to_datetime(data.Date3)
+        data.set_index('datetime', inplace=True)
+        data.rename(columns={'Bid': 'CloseBid', 'Ask': 'CloseAsk'
+                    }, inplace=True)
+        columns = ['Open', 'High', 'Low', 'Close', 'Volume',
+         'Bid_size', 'CloseBid', 'Ask_size', 'CloseAsk', 'Midpoint', 'Weighted_midpoint']
+        data = data[columns]
+        data.index.name = 'Datetime'
+        data = data[data[['Open', 'High', 'Low', 'Close', 'Bid_size',
+                          'CloseBid', 'Ask_size', 'CloseAsk']].sum(axis=1) != 0]
+        
+
+    return data
+
+  
+  
 def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', ts = False, proxy = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
@@ -457,6 +526,59 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
     return data
 
 
+async def retrieve_openInterest_async(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float,  print_url=False, proxy = proxy_url):
+    """
+    Interval size in miliseconds. 1 minute is 6000
+    """
+    assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
+    end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
+    exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
+    start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
+    strike *= 1000
+    strike = int(strike)
+    url = "http://127.0.0.1:25510/v2/hist/option/open_interest"
+    querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp,"right": right,
+                   "start_date": start_date, "strike": strike,'rth': False}
+    headers = {"Accept": "application/json"}
+    
+    start_timer = time.time()
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+        logger.info('')
+        logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
+        logger.info(f'Response time: {end_timer - start_timer}')
+        logger.info(f'Response URL: {response.url}')
+
+
+
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+
+        
+    if not __isSuccesful(response.status_code):
+        logger.error('') 
+        logger.error(f'Error in retrieve_openInterest')
+        logger.error(f'Following error for: {locals()}')
+        logger.error(f'Error in retrieving data: {response.text}')
+        logger.error('Nothing returned at all')
+        logger.info(f'Kwargs: {locals()}')
+        return
+
+    print(response.url) if print_url else None
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
+    data.rename(columns={x: x.capitalize()
+                for x in data.columns}, inplace=True)
+    # # # print(data.columns)
+    data['time'] = data['Ms_of_day'].apply(convert_milliseconds)
+    data['Date2'] = pd.to_datetime(data.Date.astype(
+        str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+    data['Date3'] = data.Date2
+    data['Datetime'] = pd.to_datetime(data.Date3)
+    data.drop(columns=[ 'Date2', 'Date3', 'Ms_of_day'], inplace=True)
+    return data
+
 
 
 def resample(data, interval, custom_agg_columns = None):
@@ -547,13 +669,13 @@ def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_
             return data
         else: 
             print('Error in retrieving data: ', data) 
-            return f"No data retrieved {response.status_code}  {response.text}"
+            return response
     else: 
-        return f"{response.status_code}  {response.text}"
+        return response
     
     
 def __isSuccesful(status_code: int): 
     return status_code >= 200 and status_code < 300
 
 def is_theta_data_retrieval_successful(response): 
-    return type(response) != str
+    return type(response) != str 
