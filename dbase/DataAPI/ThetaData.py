@@ -31,8 +31,9 @@ This Module is responsible for organizing all functions related to accessing dat
 
 """
 
-def request_from_proxy(thetaUrl, queryparam, instanceUrl): 
+def request_from_proxy(thetaUrl, queryparam, instanceUrl, print_url = False): 
     request_string = f"{thetaUrl}?{'&'.join([f'{key}={value}' for key, value in queryparam.items()])}" 
+    print(request_string) if print_url else None
     payload = json.dumps({
     "url": request_string,
     "method": "GET",
@@ -92,7 +93,7 @@ def list_contracts(symbol, start_date, print_url = False, proxy = proxy_url):
     querystring = {"start_date": start_date ,"root": symbol,  "use_csv": "true"}
     headers = {"Accept": "application/json"}
     if proxy:
-        response = request_from_proxy(url, querystring, proxy)
+        response = request_from_proxy(url, querystring, proxy, print_url=print_url)
     else:
         response = requests.get(url, headers=headers, params=querystring)
     print(response.url) if print_url else None
@@ -361,18 +362,18 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: s
     headers = {"Accept": "application/json"}
     
     start_timer = time.time()
-    response = requests.get(url, headers=headers, params=querystring)
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
     end_timer = time.time()
+
     if (end_timer - start_timer) > 4:
         logger.info('')
         logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
         logger.info(f'Response time: {end_timer - start_timer}')
         logger.info(f'Response URL: {response.url}')
 
-    if proxy:
-        response = request_from_proxy(url, querystring, proxy)
-    else:
-        response = requests.get(url, headers=headers, params=querystring)
     print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if len(data.columns) == 1:
@@ -426,22 +427,20 @@ def retrieve_quote(symbol,
                    "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False, 'end_time': end_time}
     headers = {"Accept": "application/json"}
     
+
     start_timer = time.time()
-    response = requests.get(url, headers=headers, params=querystring)
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
     end_timer = time.time()
+
+
     if (end_timer - start_timer) > 4:
         logger.info('')
         logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
         logger.info(f'Response time: {end_timer - start_timer}')
         logger.info(f'Response URL: {response.url}')
-
-
-    # print(response.url) if print_url else None
-    data = pd.read_csv(StringIO(response.text))
-    if proxy:
-        response = request_from_proxy(url, querystring, proxy)
-    else:
-        response = requests.get(url, headers=headers, params=querystring)
     print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if len(data.columns) == 1:
@@ -498,7 +497,7 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
 
 
     if proxy:
-        response = request_from_proxy(url, querystring, proxy)
+        response = request_from_proxy(url, querystring, proxy, print_url=print_url)
     else:
         response = requests.get(url, headers=headers, params=querystring)
 
@@ -512,17 +511,25 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
         logger.info(f'Kwargs: {locals()}')
         return
 
-    print(response.url) if print_url else None
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
-    data.rename(columns={x: x.capitalize()
-                for x in data.columns}, inplace=True)
-    # # # print(data.columns)
-    data['time'] = data['Ms_of_day'].apply(convert_milliseconds)
-    data['Date2'] = pd.to_datetime(data.Date.astype(
-        str)).apply(lambda x: x.strftime('%Y-%m-%d'))
-    data['Date3'] = data.Date2
-    data['Datetime'] = pd.to_datetime(data.Date3)
-    data.drop(columns=[ 'Date2', 'Date3', 'Ms_of_day'], inplace=True)
+    try:
+        print(response.url) if print_url else None
+        data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
+        data.rename(columns={x: x.capitalize()
+                    for x in data.columns}, inplace=True)
+        # # # print(data.columns)
+        data['time'] = data['Ms_of_day'].apply(convert_milliseconds)
+        data['Date2'] = pd.to_datetime(data.Date.astype(
+            str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+        data['Date3'] = data.Date2
+        data['Datetime'] = pd.to_datetime(data.Date3)
+        data.drop(columns=[ 'Date2', 'Date3', 'Ms_of_day'], inplace=True)
+    except Exception as e:
+        logger.error('') 
+        logger.error(f'Error in retrieve_openInterest. Error: {e}')
+        logger.error(f'Error in retrieving data: {response.text}')
+        logger.error('Nothing returned at all')
+        logger.info(f'Kwargs: {locals()}')
+        raise e
     return data
 
 

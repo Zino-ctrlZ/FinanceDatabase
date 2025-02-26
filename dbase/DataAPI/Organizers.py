@@ -10,11 +10,12 @@ from trade.assets.Calculate import Calculate
 from trade.assets.rates import get_risk_free_rate_helper
 from trade.assets.Stock import Stock
 from trade.helpers.Logging import setup_logger
-from dbase.DataAPI.ThetaData import *
+from dbase.DataAPI.ThetaData import * ## Note: No need to import all functions, just the ones you need
 import numpy as np
 import pandas as pd
-from trade.helpers.helper import *
+from trade.helpers.helper import * ## Note: No need to import all functions, just the ones you need
 from dotenv import load_dotenv
+from trade.helpers.types import OptionModelAttributes
 
 
 logger = setup_logger('dbase.DataAPI.Organizers')
@@ -63,16 +64,25 @@ def generate_optionData_to_save(symbol,
     
     if len(data.columns) > 2 and len(data) != 0:
         data[['Strike','Expiration', 'Put/Call']] = strike, exp, right
-        stock = Stock(symbol)
+        stock = Stock(symbol, run_chain = False)
         if timeAggFlag.upper() =='EOD':
-            close = stock.spot(ts= True, ts_timeframe='day', ts_timewidth='1', ts_start=start_date, ts_end = end_date)['close'] ## Ensure to put if statement for intraday
+            close = stock.spot(ts= True, ts_timeframe='day', 
+                               ts_timewidth='1', 
+                               ts_start=start_date, 
+                               ts_end = end_date, 
+                               spot_type = OptionModelAttributes.spot_type.value)['close'] ## Ensure to put if statement for intraday
             dividend = stock.div_yield_history(start = start_date)
             rates_ts = get_risk_free_rate_helper('1d')
             RF_rate = rates_ts['annualized']
             RF_name = rates_ts['name']
             
         elif timeAggFlag.upper() == 'INTRA':
-            close = stock.spot(ts= True, ts_timeframe='hour', ts_timewidth='1', ts_start=start_date, ts_end = end_date)['close'] ## Ensure to put if statement for intraday
+            close = stock.spot(ts= True, 
+                               ts_timeframe='hour', 
+                               ts_timewidth='1', 
+                               ts_start=start_date, 
+                               ts_end = end_date, 
+                               spot_type = OptionModelAttributes.spot_type.value)['close'] ## Ensure to put if statement for intraday
             dividend = stock.div_yield_history(start = start_date)
             dividend = resample(dividend, '1h') if isinstance(dividend, pd.Series) else dividend
             rates_ts = get_risk_free_rate_helper('1h')
@@ -85,7 +95,7 @@ def generate_optionData_to_save(symbol,
         data['RF_rate_name'] = RF_name
         data['dividend'] = dividend
         tick_date = pd.to_datetime(exp).strftime('%Y%m%d')
-        data['OptionTick'] = generate_option_tick(symbol, right, exp, strike)
+        data['OptionTick'] = generate_option_tick_new(symbol, right, exp, strike)
         data['Underlier'] = symbol.upper()
         data['Datetime'] = data.index.strftime('%Y-%m-%d') if timeAggFlag.upper() == 'EOD' else data.index.strftime('%Y-%m-%d %H:%M:%S')
         data.ffill(inplace = True)
