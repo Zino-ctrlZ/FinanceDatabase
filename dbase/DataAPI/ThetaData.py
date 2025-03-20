@@ -14,9 +14,16 @@ from io import StringIO
 import pandas as pd
 import os
 import json
+from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, verify_ticker
+from copy import deepcopy
 
     ##To-Do: Add a data cleaning function to remove zeros and inf and check for other anomalies. 
     ## In the function, add a logger to log the anomalies
+"""
+This Module is responsible for organizing all functions related to accessing data from ThetaData Vendor
+
+"""
+
 
 logger = setup_logger('dbase.DataAPI.ThetaData')
 proxy_url = os.environ.get('PROXY_URL') if os.environ.get('PROXY_URL') else None
@@ -26,10 +33,43 @@ if proxy_url is None:
 else:
     print(f'Using Proxy URL: {proxy_url}')
 
-"""
-This Module is responsible for organizing all functions related to accessing data from ThetaData Vendor
 
-"""
+def resolve_ticker_history(kwargs, _callable, _type = 'historical'):
+    if _type == 'historical':
+        tick = kwargs['symbol']
+        change_date = TICK_CHANGE_ALIAS[tick][-1]
+        old_tick = TICK_CHANGE_ALIAS[tick][0]
+        new_tick = TICK_CHANGE_ALIAS[tick][1]
+        old_tick_kwargs = deepcopy(kwargs)
+        new_tick_kwargs = deepcopy(kwargs)
+        old_tick_kwargs['symbol'] = old_tick
+        new_tick_kwargs['symbol'] = new_tick
+
+        ## Retrieve the data for the old tick
+        old_tick_data = _callable(**old_tick_kwargs) if pd.Timestamp(change_date) > pd.Timestamp(kwargs['start_date']) else None
+        new_tick_data = _callable(**new_tick_kwargs) if pd.Timestamp(change_date) <= pd.Timestamp(kwargs['end_date']) else None
+
+        ## If no data is found for the old tick, then we will just return the new tick data. Change to dataframe to avoid errors when concatenating
+        if old_tick_data is None:
+            print(f'No data found for Old_tick {old_tick}')
+            old_tick_data = pd.DataFrame()
+        if new_tick_data is None:
+            print(f'No data found for new_tick {new_tick}')
+            new_tick_data = pd.DataFrame()
+
+        full_data = pd.concat([old_tick_data, new_tick_data])
+        return full_data
+    elif _type == 'snapshot':
+        tick = kwargs['symbol']
+        change_date = TICK_CHANGE_ALIAS[tick][-1]
+        old_tick = TICK_CHANGE_ALIAS[tick][0]
+        new_tick = TICK_CHANGE_ALIAS[tick][1]
+        new_tick_kwargs = deepcopy(kwargs)
+        new_tick_kwargs['symbol'] = old_tick if pd.Timestamp(kwargs['start_date']) <= pd.Timestamp(change_date) else new_tick
+        return _callable(**new_tick_kwargs)
+
+
+
 
 def request_from_proxy(thetaUrl, queryparam, instanceUrl, print_url = False): 
     request_string = f"{thetaUrl}?{'&'.join([f'{key}={value}' for key, value in queryparam.items()])}" 
@@ -87,11 +127,16 @@ def quote_snapshot(symbol, proxy = proxy_url):
         response = requests.get(url, headers=headers, params=querystring)
     return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
-def list_contracts(symbol, start_date, print_url = False, proxy = proxy_url):
+def list_contracts(symbol, start_date, print_url = False, proxy = proxy_url, **kwargs):
+    pass_kwargs = {'start_date': start_date, 'symbol': symbol}
+    depth = pass_kwargs['depth'] = kwargs.get('depth', 0) 
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     url = "http://127.0.0.1:25510/v2/list/contracts/option/trade"
     querystring = {"start_date": start_date ,"root": symbol,  "use_csv": "true"}
     headers = {"Accept": "application/json"}
+    if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
+        pass_kwargs['depth'] += 1
+        return resolve_ticker_history(pass_kwargs, list_contracts, _type = 'snapshot')
     if proxy:
         response = request_from_proxy(url, querystring, proxy, print_url=print_url)
     else:
@@ -203,11 +248,16 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, 
     return data
 
 
-def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, print_url=False, rt=True, proxy = proxy_url):
+def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, print_url=False, rt=True, proxy = proxy_url, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
+    pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 'strike': strike}
+    depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
+    if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
+        pass_kwargs['depth'] += 1
+        return resolve_ticker_history(pass_kwargs, retrieve_eod_ohlc, _type = 'historical')
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
@@ -223,8 +273,11 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
 
     if proxy:
         response = request_from_proxy(url, querystring, proxy)
+        response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
+        print(response_url) if print_url else None
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        print(response.url) if print_url else None
 
 
     end_timer = time.time()
@@ -235,7 +288,6 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
         logger.info(f'Response URL: {response.url}')
 
         
-    print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if len(data.columns) == 1:
         logger.error('')
@@ -272,11 +324,16 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
     return data
 
 
-async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, print_url=False, rt=True, proxy = proxy_url):
+async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, print_url=False, rt=True, proxy = proxy_url, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
+    pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 'strike': strike}
+    depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
+    if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
+        pass_kwargs['depth'] += 1
+        return resolve_ticker_history(pass_kwargs, retrieve_eod_ohlc_async, _type = 'historical')
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
@@ -342,12 +399,21 @@ async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, s
 
   
   
-def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', ts = False, proxy = proxy_url):
+def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', ts = False, proxy = proxy_url, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
     interval = '1h'
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
+    pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 
+                   'strike': strike, 'start_time': start_time, 'end_time': end_time, 'interval': interval,
+                   'print_url': print_url, 'ts': ts}
+    
+    depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
+    if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
+        pass_kwargs['depth'] += 1
+
+        return resolve_ticker_history(pass_kwargs, retrieve_quote_rt, _type = 'historical')
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
     ivl = identify_length(*extract_numeric_value(interval), rt=True)*60000
@@ -408,12 +474,23 @@ def retrieve_quote(symbol,
                    start_time: str = '9:30', 
                    print_url=False, 
                    end_time='16:00',
-                   interval = '30m', proxy = proxy_url):
+                   interval = '30m', 
+                   proxy = proxy_url,
+                   **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
     
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
+    pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 
+                'strike': strike, 'start_time': start_time, 'end_time': end_time, 'interval': interval,
+                'print_url': print_url}
+    
+    depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
+    if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
+        pass_kwargs['depth'] += 1
+
+        return resolve_ticker_history(pass_kwargs, retrieve_quote, _type = 'historical')
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
     ivl = identify_length(*extract_numeric_value(interval), rt=True)*60000
@@ -431,8 +508,11 @@ def retrieve_quote(symbol,
     start_timer = time.time()
     if proxy:
         response = request_from_proxy(url, querystring, proxy)
+        response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
+        print(response_url) if print_url else None
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        print(response.url) if print_url else None
     end_timer = time.time()
 
 
@@ -441,7 +521,7 @@ def retrieve_quote(symbol,
         logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
         logger.info(f'Response time: {end_timer - start_timer}')
         logger.info(f'Response URL: {response.url}')
-    print(response.url) if print_url else None
+    
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if len(data.columns) == 1:
         logger.error('')
