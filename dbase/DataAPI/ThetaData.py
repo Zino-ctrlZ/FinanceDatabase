@@ -51,10 +51,10 @@ def resolve_ticker_history(kwargs, _callable, _type = 'historical'):
 
         ## If no data is found for the old tick, then we will just return the new tick data. Change to dataframe to avoid errors when concatenating
         if old_tick_data is None:
-            print(f'No data found for Old_tick {old_tick}')
+            logger.info(f'No data found for Old_tick {old_tick}')
             old_tick_data = pd.DataFrame()
         if new_tick_data is None:
-            print(f'No data found for new_tick {new_tick}')
+            logger.info(f'No data found for new_tick {new_tick}')
             new_tick_data = pd.DataFrame()
 
         full_data = pd.concat([old_tick_data, new_tick_data])
@@ -128,20 +128,24 @@ def quote_snapshot(symbol, proxy = proxy_url):
     return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
 def list_contracts(symbol, start_date, print_url = False, proxy = proxy_url, **kwargs):
-    pass_kwargs = {'start_date': start_date, 'symbol': symbol}
+    pass_kwargs = {'start_date': start_date, 'symbol': symbol, 'print_url': print_url}
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0) 
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
-    url = "http://127.0.0.1:25510/v2/list/contracts/option/trade"
+    url = "http://127.0.0.1:25510/v2/list/contracts/option/quote"
     querystring = {"start_date": start_date ,"root": symbol,  "use_csv": "true"}
     headers = {"Accept": "application/json"}
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs['depth'] += 1
         return resolve_ticker_history(pass_kwargs, list_contracts, _type = 'snapshot')
+
     if proxy:
-        response = request_from_proxy(url, querystring, proxy, print_url=print_url)
+        response = request_from_proxy(url, querystring, proxy)
+        response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
+        print(response_url) if print_url else None
     else:
         response = requests.get(url, headers=headers, params=querystring)
-    print(response.url) if print_url else None
+        print(response.url) if print_url else None
+
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if data.shape[0] == 0:
         logger.error(f'No contracts found for {symbol} on {start_date}')
@@ -253,7 +257,7 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
     Interval size in miliseconds. 1 minute is 6000
     """
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
-    pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 'strike': strike}
+    pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 'strike': strike, 'print_url': print_url}
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs['depth'] += 1
@@ -551,11 +555,19 @@ def retrieve_quote(symbol,
 
 
 
-def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float,  print_url=False, proxy = proxy_url):
+def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float,  print_url=False, proxy = proxy_url, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
+    pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 
+            'strike': strike, 'print_url': print_url}
+    
+    depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
+    if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
+        pass_kwargs['depth'] += 1
+        return resolve_ticker_history(pass_kwargs, retrieve_openInterest
+                                      , _type = 'historical')
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
@@ -766,3 +778,88 @@ def __isSuccesful(status_code: int):
 
 def is_theta_data_retrieval_successful(response): 
     return type(response) != str 
+
+
+def retrieve_chain_bulk(symbol, 
+                        exp, 
+                        start_date, 
+                        end_date, 
+                        end_time,
+                        right = None ,
+                        proxy = proxy_url,
+                        print_url = False,
+                        **kwargs) -> pd.DataFrame:
+    pass_kwargs = {
+        'symbol': symbol,
+        'exp': exp,
+        'start_date': start_date,
+        'end_date': end_date,
+        'end_time': end_time,
+        'print_url': print_url
+    }
+    depth = pass_kwargs['depth'] = kwargs.get('depth', 0) 
+    end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
+    exp = int(pd.to_datetime(exp).strftime('%Y%m%d')) if exp else 0
+    start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
+    end_time = str(convert_time_to_miliseconds(end_time))
+    url = 'http://127.0.0.1:25510/v2/bulk_at_time/option/quote'
+    querystring = {
+        'root': symbol,
+        'exp': exp,
+        'start_date': start_date,
+        'end_date': end_date,
+        'ivl': end_time,
+        'use_csv': 'true'
+    }
+    if right:
+        querystring['right'] = right
+    headers = {"Accept": "application/json"}
+    if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
+        pass_kwargs['depth'] += 1
+        return resolve_ticker_history(pass_kwargs, retrieve_chain_bulk, _type = 'snapshot')
+
+
+    start_timer = time.time()
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+        logger.info('')
+        logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
+        logger.info(f'Response time: {end_timer - start_timer}')
+        logger.info(f'Response URL: {response.url}')
+
+    #use proxy option
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy, print_url)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
+    if len(data.columns) == 1:
+        logger.error('')
+        logger.error('Error in retrieve_eod_ohlc')
+        logger.error(f'Following error for: {locals()}')
+        logger.error(
+            f'ThetaData Response: {data.columns[0]}')
+        logger.error('Nothing returned at all')
+
+    else:
+        data.columns = data.columns.str.lower()
+        data['midpoint'] = data[['bid', 'ask']].sum(axis=1)/2
+        data['weighted_midpoint'] = ((data['ask_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (
+        data['ask'])) + ((data['bid_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (data['bid']))
+        data.rename(columns={x: x.capitalize()
+                    for x in data.columns}, inplace=True)
+        
+        data['Date2'] = pd.to_datetime(data.Date.astype(
+            str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+        data['Date3'] = data.Date2
+        data['Expiration'] = pd.to_datetime(data.Expiration, format = '%Y%m%d')
+        data['Strike'] = data.Strike/1000
+        data['datetime'] = pd.to_datetime(data.Date3)
+        data.set_index('datetime', inplace=True)
+        data.rename(columns={'Bid': 'CloseBid', 'Ask': 'CloseAsk'
+                    }, inplace=True)
+        columns = ['Root', 'Expiration', 'Strike', 'Right', 'Bid_size', 'CloseBid',  'Ask_size', 
+            'CloseAsk', 'Date', 'Midpoint', 'Weighted_midpoint']
+        data = data[columns]
+        
+    return data

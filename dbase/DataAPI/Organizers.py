@@ -16,6 +16,7 @@ import pandas as pd
 from trade.helpers.helper import * ## Note: No need to import all functions, just the ones you need
 from dotenv import load_dotenv
 from trade.helpers.types import OptionModelAttributes
+from trade.models.utils import resolve_missing_vol
 
 
 logger = setup_logger('dbase.DataAPI.Organizers')
@@ -106,6 +107,7 @@ def generate_optionData_to_save(symbol,
 
 
 def Calc_Risks(data, timeAggFlag, symbol, end_date,exp, right, start_date, strike,):
+    data = data[~data.Datetime.duplicated(keep = 'first')]
     data['BS_IV'] = data.apply(lambda x: IV_handler(
                                                             price = x['Close'],
                                                             S = x['Underlier_price'],
@@ -150,6 +152,22 @@ def Calc_Risks(data, timeAggFlag, symbol, end_date,exp, right, start_date, strik
                                                             q = x['dividend'],
                                                             flag = x['Put/Call'].lower()
     ), axis = 1)
+    
+    zero_mask = data['midpoint_BS_IV'] == 0
+    if zero_mask.sum() > 0:
+        logger.error(f"Zero values found for {generate_option_tick_new(symbol, right, exp, strike)}. Resolving missing vol")
+        zero_result = data[zero_mask].apply(lambda x: resolve_missing_vol(
+            underlier = symbol,
+            expiration= pd.to_datetime(x['Expiration']).strftime('%Y-%m-%d'),
+            strike = x['Strike'],
+            put_call= x['Put/Call'],
+            datetime  = pd.to_datetime(x['Datetime']).strftime('%Y-%m-%d'),
+            S = x['Underlier_price'],
+            r = x['RF_rate'],
+            q = x['dividend'],
+        ), axis = 1)
+        data.loc[zero_mask, 'midpoint_BS_IV'] = zero_result
+
 
     data['midpoint_Binomial_IV'] = data.apply(lambda x: binomial_implied_vol(
                                                             price = x['Midpoint'],
