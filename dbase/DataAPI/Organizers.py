@@ -33,6 +33,7 @@ def generate_optionData_to_save(symbol,
                             print_url = False, 
                             rt = True,
                             range_filters = None,
+                            bulk = False,
                             timeAggFlag ='EOD'
     
 ):
@@ -54,7 +55,18 @@ def generate_optionData_to_save(symbol,
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
     ## Start by organizing necessary data points
     if timeAggFlag.upper() == 'EOD':
-        data = retrieve_eod_ohlc(symbol = symbol, end_date = end_date, exp = exp, right = right, start_date = start_date, strike = strike, print_url = print_url, rt = rt)
+        if bulk:
+            data = retrieve_bulk_eod(
+                symbol = symbol,
+                exp = exp,
+                start_date = start_date,
+                end_date = end_date,
+                print_url= print_url,
+            )
+            data.rename(columns = {'Root':'Underlier', 'Right':'Put/Call', }, inplace = True)
+        else:
+            data = retrieve_eod_ohlc(symbol = symbol, end_date = end_date, exp = exp, right = right, start_date = start_date, strike = strike, print_url = print_url, rt = rt)
+
     elif timeAggFlag.upper() == 'INTRA':
         data = retrieve_ohlc(symbol = symbol, end_date = end_date, exp = exp, right = right, start_date = start_date, strike = strike, print_url = print_url)
         
@@ -64,7 +76,8 @@ def generate_optionData_to_save(symbol,
 
     
     if len(data.columns) > 2 and len(data) != 0:
-        data[['Strike','Expiration', 'Put/Call']] = strike, exp, right
+        if not bulk:
+            data[['Strike','Expiration', 'Put/Call']] = strike, exp, right 
         stock = Stock(symbol, run_chain = False)
         if timeAggFlag.upper() =='EOD':
             close = stock.spot(ts= True, ts_timeframe='day', 
@@ -96,7 +109,10 @@ def generate_optionData_to_save(symbol,
         data['RF_rate_name'] = RF_name
         data['dividend'] = dividend
         tick_date = pd.to_datetime(exp).strftime('%Y%m%d')
-        data['OptionTick'] = generate_option_tick_new(symbol, right, exp, strike)
+        if bulk:
+            data['OptionTick'] = data.apply(lambda x: generate_option_tick_new(x['Underlier'],  x['Put/Call'],x['Expiration'].strftime('%Y-%m-%d'), x['Strike']), axis=1)
+        else:
+            data['OptionTick'] = generate_option_tick_new(symbol, right, exp, strike)
         data['Underlier'] = symbol.upper()
         data['Datetime'] = data.index.strftime('%Y-%m-%d') if timeAggFlag.upper() == 'EOD' else data.index.strftime('%Y-%m-%d %H:%M:%S')
         data.ffill(inplace = True)
@@ -123,7 +139,7 @@ def Calc_Risks(data, timeAggFlag, symbol, end_date,exp, right, start_date, strik
                                                             price = x['Close'],
                                                             S = x['Underlier_price'],
                                                             K = x['Strike'],
-                                                            T = x['Expiration'],
+                                                            exp_date = x['Expiration'],
                                                             r = x['RF_rate'],
                                                             dividend_yield = x['dividend'],
                                                             option_type = x['Put/Call'].lower(),
@@ -173,7 +189,7 @@ def Calc_Risks(data, timeAggFlag, symbol, end_date,exp, right, start_date, strik
                                                             price = x['Midpoint'],
                                                             S = x['Underlier_price'],
                                                             K = x['Strike'],
-                                                            T = x['Expiration'],
+                                                            exp_date = x['Expiration'],
                                                             r = x['RF_rate'],
                                                             dividend_yield = x['dividend'],
                                                             option_type = x['Put/Call'].lower(),
@@ -194,7 +210,7 @@ def Calc_Risks(data, timeAggFlag, symbol, end_date,exp, right, start_date, strik
                                                             price = x['Weighted_midpoint'],
                                                             S = x['Underlier_price'],
                                                             K = x['Strike'],
-                                                            T = x['Expiration'],
+                                                            exp_date = x['Expiration'],
                                                             r = x['RF_rate'],
                                                             dividend_yield = x['dividend'],
                                                             option_type = x['Put/Call'].lower(),
@@ -206,7 +222,7 @@ def Calc_Risks(data, timeAggFlag, symbol, end_date,exp, right, start_date, strik
                                                     price = x['CloseBid'],
                                                     S = x['Underlier_price'],
                                                     K = x['Strike'],
-                                                    T = x['Expiration'],
+                                                    exp_date = x['Expiration'],
                                                     r = x['RF_rate'],
                                                     dividend_yield = x['dividend'],
                                                     option_type = x['Put/Call'].lower(),
@@ -217,7 +233,7 @@ def Calc_Risks(data, timeAggFlag, symbol, end_date,exp, right, start_date, strik
                                                             price = x['CloseAsk'],
                                                             S = x['Underlier_price'],
                                                             K = x['Strike'],
-                                                            T = x['Expiration'],
+                                                            exp_date = x['Expiration'],
                                                             r = x['RF_rate'],
                                                             dividend_yield = x['dividend'],
                                                             option_type = x['Put/Call'].lower(),

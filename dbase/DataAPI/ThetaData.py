@@ -321,8 +321,8 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
          'Bid_size', 'CloseBid', 'Ask_size', 'CloseAsk', 'Midpoint', 'Weighted_midpoint']
         data = data[columns]
         data.index.name = 'Datetime'
-        data = data[data[['Open', 'High', 'Low', 'Close', 'Bid_size',
-                          'CloseBid', 'Ask_size', 'CloseAsk']].sum(axis=1) != 0]
+        # data = data[data[['Open', 'High', 'Low', 'Close', 'Bid_size',
+        #                   'CloseBid', 'Ask_size', 'CloseAsk']].sum(axis=1) != 0]
         
 
     return data
@@ -395,13 +395,90 @@ async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, s
          'Bid_size', 'CloseBid', 'Ask_size', 'CloseAsk', 'Midpoint', 'Weighted_midpoint']
         data = data[columns]
         data.index.name = 'Datetime'
-        data = data[data[['Open', 'High', 'Low', 'Close', 'Bid_size',
-                          'CloseBid', 'Ask_size', 'CloseAsk']].sum(axis=1) != 0]
         
 
     return data
 
   
+
+def retrieve_bulk_eod(
+    symbol,
+    exp,
+    start_date,
+    end_date,
+    proxy = proxy_url,
+    print_url = False,
+    **kwargs
+):
+
+    pass_kwargs = {
+        'symbol': symbol,
+        'exp': exp,
+        'start_date': start_date,
+        'end_date': end_date,
+        'print_url': print_url
+    }
+    depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
+    if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
+        pass_kwargs['depth'] += 1
+        return resolve_ticker_history(pass_kwargs, retrieve_bulk_eod, _type = 'historical')
+
+    end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
+    exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
+    start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
+    url = 'http://127.0.0.1:25510/v2/bulk_hist/option/eod'
+    querystring = {
+    'root': symbol,
+    'exp': exp,
+    'start_date': start_date,
+    'end_date': end_date,
+    'use_csv': 'true'
+    }
+
+    headers = {"Accept": "application/json"}
+    start_timer = time.time()
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy, print_url)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+            logger.info('')
+            logger.info(f'Long response time for Bulk EOD {symbol}, {exp}')
+            logger.info(f'Response time: {end_timer - start_timer}')
+            logger.info(f'Response URL: {response.url}')
+
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
+    if len(data.columns) == 1:
+        logger.error('')
+        logger.error('Error in retrieve_eod_ohlc')
+        logger.error(f'Following error for: {locals()}')
+        logger.error(
+            f'ThetaData Response: {data.columns[0]}')
+        logger.error('Nothing returned at all')
+    else:
+
+        data['midpoint'] = data[['bid', 'ask']].sum(axis=1)/2
+        data['weighted_midpoint'] = ((data['ask_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (
+        data['ask'])) + ((data['bid_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (data['bid']))
+        data.rename(columns={x: x.capitalize()
+                    for x in data.columns}, inplace=True)
+        
+        data['Date2'] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+        data['Date3'] = data.Date2
+        data['datetime'] = pd.to_datetime(data.Date3)
+        data.set_index('datetime', inplace=True)
+        data.rename(columns={'Bid': 'CloseBid', 'Ask': 'CloseAsk'}, inplace=True)
+        data['Strike'] = data.Strike/1000
+        data['Expiration'] = pd.to_datetime(data.Expiration, format = '%Y%m%d')
+        columns = ['Root', 'Strike', 'Expiration', 'Right', 'Open', 'High', 'Low', 'Close', 'Volume',
+            'Bid_size', 'CloseBid', 'Ask_size', 'CloseAsk', 'Midpoint', 'Weighted_midpoint']
+        data = data[columns]
+        data.index.name = 'Datetime'
+
+    return data
+
+
   
 def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', ts = False, proxy = proxy_url, **kwargs):
     """
@@ -625,6 +702,86 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
     return data
 
 
+def retrieve_bulk_open_interest(
+    symbol,
+    exp,
+    start_date,
+    end_date,
+    proxy = proxy_url,
+    print_url = False,
+    **kwargs
+):
+
+    pass_kwargs = {
+        'symbol': symbol,
+        'exp': exp,
+        'start_date': start_date,
+        'end_date': end_date,
+        'print_url': print_url
+    }
+    depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
+    if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
+        pass_kwargs['depth'] += 1
+        return resolve_ticker_history(pass_kwargs, retrieve_bulk_eod, _type = 'historical')
+
+    end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
+    exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
+    start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
+    url = 'http://127.0.0.1:25510/v2/bulk_hist/option/open_interest'
+    querystring = {
+    'root': symbol,
+    'exp': exp,
+    'start_date': start_date,
+    'end_date': end_date,
+    'use_csv': 'true'
+    }
+
+    headers = {"Accept": "application/json"}
+    start_timer = time.time()
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy, print_url)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+            logger.info('')
+            logger.info(f'Long response time for Bulk EOD {symbol}, {exp}')
+            logger.info(f'Response time: {end_timer - start_timer}')
+            logger.info(f'Response URL: {response.url}')
+
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
+    if not __isSuccesful(response.status_code):
+        logger.error('') 
+        logger.error(f'Error in retrieve_openInterest')
+        logger.error(f'Following error for: {locals()}')
+        logger.error(f'Error in retrieving data: {response.text}')
+        logger.error('Nothing returned at all')
+        logger.info(f'Kwargs: {locals()}')
+        return
+    try:
+        print(response.url) if print_url else None
+        data.rename(columns={x: x.capitalize()
+                    for x in data.columns}, inplace=True)
+        # # # print(data.columns)
+        data['time'] = data['Ms_of_day'].apply(convert_milliseconds)
+        data['Date2'] = pd.to_datetime(data.Date.astype(
+            str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+        data['Date3'] = data.Date2
+        data['Datetime'] = pd.to_datetime(data.Date3)
+        data.drop(columns=[ 'Date2', 'Date3', 'Ms_of_day'], inplace=True)
+        data.Expiration = pd.to_datetime(data.Expiration, format = '%Y%m%d')
+        data.Strike = data.Strike/1000
+    except Exception as e:
+        logger.error('') 
+        logger.error(f'Error in retrieve_openInterest. Error: {e}')
+        logger.error(f'Error in retrieving data: {response.text}')
+        logger.error('Nothing returned at all')
+        logger.info(f'Kwargs: {locals()}')
+        raise e
+    return data
+
+
+
 async def retrieve_openInterest_async(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float,  print_url=False, proxy = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
@@ -820,22 +977,25 @@ def retrieve_chain_bulk(symbol,
 
 
     start_timer = time.time()
-    end_timer = time.time()
-    if (end_timer - start_timer) > 4:
-        logger.info('')
-        logger.info(f'Long response time for {symbol}, {exp}, {right}, {strike}')
-        logger.info(f'Response time: {end_timer - start_timer}')
-        logger.info(f'Response URL: {response.url}')
+
 
     #use proxy option
     if proxy:
         response = request_from_proxy(url, querystring, proxy, print_url)
+        response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        response_url = response.url
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+        logger.info('')
+        logger.info(f'Long response time for {symbol}, {exp} in Bulk Chain')
+        logger.info(f'Response time: {end_timer - start_timer}')
+        logger.info(f'Response URL: {response_url}')
     if len(data.columns) == 1:
         logger.error('')
-        logger.error('Error in retrieve_eod_ohlc')
+        logger.error('Error in retrieve_bulk_chain')
         logger.error(f'Following error for: {locals()}')
         logger.error(
             f'ThetaData Response: {data.columns[0]}')
