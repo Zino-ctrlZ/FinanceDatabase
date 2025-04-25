@@ -14,6 +14,9 @@ from io import StringIO
 import pandas as pd
 import os
 import json
+from datetime import time as dtTime
+import numpy as np
+from dbase.utils import add_eod_timestamp, enforce_bus_hours, PRICING_CONFIG
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, verify_ticker
 from copy import deepcopy
 
@@ -32,6 +35,7 @@ if proxy_url is None:
     print('No Proxy URL found. ThetaData API will default to direct access')
 else:
     print(f'Using Proxy URL: {proxy_url}')
+
 
 
 def resolve_ticker_history(kwargs, _callable, _type = 'historical'):
@@ -173,14 +177,14 @@ def extract_numeric_value(timeframe_str):
     return strings, integers
 
 
-def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = '9:30', print_url=False, proxy: str = proxy_url):
+def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], print_url=False, proxy: str = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
     proxy the endpoint to the proxy server http://<ip>:<port>/thetadata
     """
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
-    interval = '1h'
-    strike_og, start_og, end_og, exp_og = strike, start_date, end_date, exp
+    interval = PRICING_CONFIG['INTRADAY_AGG']
+    strike_og, start_og, end_og, exp_og, start_time_og = strike, start_date, end_date, exp, start_time
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
     ivl = identify_length(*extract_numeric_value(interval), rt=True)*60000
@@ -194,7 +198,15 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, 
     headers = {"Accept": "application/json"}
 
     start_timer = time.time()
-    response = requests.get(url, headers=headers, params=querystring)
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+        response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
+        print(response_url) if print_url else None
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+        print(response.url) if print_url else None
+
+
     end_timer = time.time()
     if (end_timer - start_timer) > 4:
         logger.info('')
@@ -202,12 +214,6 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, 
         logger.info(f'Response time: {end_timer - start_timer}')
         logger.info(f'Response URL: {response.url}')
 
-    #use proxy option
-    if proxy:
-        response = request_from_proxy(url, querystring, proxy)
-    else:
-        response = requests.get(url, headers=headers, params=querystring)
-    print(response.url) if print_url else None
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if len(data.columns) == 1:
         logger.error('')
@@ -226,10 +232,13 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, 
         data['time'] = data.Ms_of_day.apply(lambda c: convert_milliseconds(c))
         #use proxy option
         if proxy:
-            quote_data = retrieve_quote(symbol, end_og, exp_og, right,start_og ,strike_og, proxy = proxy)
+            quote_data = retrieve_quote(symbol, end_og, exp_og, right,start_og ,strike_og, start_time = start_time_og, proxy = proxy)
         else: 
-            quote_data = retrieve_quote(symbol, end_og, exp_og, right,start_og ,strike_og)
-        data = data.merge(quote_data[['Date', 'time', 'Ask_size', 'Ask', 'Bid', 'Bid_size', 'Weighted_midpoint','Midpoint']], on = ['Date', 'time'], how = 'left')
+            quote_data = retrieve_quote(symbol, end_og, exp_og, right,start_og ,strike_og, start_time = start_time_og,)
+
+        ## Merging data into quote data, because quote data has complete dates, whereas OHLC only has dates when traded
+        quote_data = quote_data[['Date', 'time', 'Ask_size', 'Ask', 'Bid', 'Bid_size', 'Weighted_midpoint','Midpoint']]
+        data = quote_data.merge(data, on = ['Date', 'time'], how = 'left')
         data.rename(columns = {
             'Ask': 'CloseAsk',
             'Bid': 'CloseBid'
@@ -246,8 +255,7 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, 
          'Bid_size', 'CloseBid', 'Ask_size', 'CloseAsk', 'Midpoint', 'Weighted_midpoint']
         data = data[columns]
         data.index.name = 'Datetime'
-        data = resample(data, '1h')
- 
+        data = enforce_bus_hours(resample(data, PRICING_CONFIG['INTRADAY_AGG']))
 
     return data
 
@@ -273,8 +281,6 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
     headers = {"Accept": "application/json"}
     
     start_timer = time.time()
-
-
     if proxy:
         response = request_from_proxy(url, querystring, proxy)
         response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
@@ -311,7 +317,7 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
         
         data['time'] = '16:00:00' if rt else ''
         data['Date2'] = pd.to_datetime(data.Date.astype(
-            str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+            str)).apply(lambda x: x.strftime(f'%Y-%m-%d {PRICING_CONFIG["MARKET_CLOSE_TIME"]}'))
         data['Date3'] = data.Date2
         data['datetime'] = pd.to_datetime(data.Date3)
         data.set_index('datetime', inplace=True)
@@ -388,6 +394,7 @@ async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, s
             str)).apply(lambda x: x.strftime('%Y-%m-%d'))
         data['Date3'] = data.Date2
         data['datetime'] = pd.to_datetime(data.Date3)
+        data['datetime'].hour = 16
         data.set_index('datetime', inplace=True)
         data.rename(columns={'Bid': 'CloseBid', 'Ask': 'CloseAsk'
                     }, inplace=True)
@@ -451,7 +458,7 @@ def retrieve_bulk_eod(
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     if len(data.columns) == 1:
         logger.error('')
-        logger.error('Error in retrieve_eod_ohlc')
+        logger.error('Error in retrieve_bulk_eod')
         logger.error(f'Following error for: {locals()}')
         logger.error(
             f'ThetaData Response: {data.columns[0]}')
@@ -464,7 +471,8 @@ def retrieve_bulk_eod(
         data.rename(columns={x: x.capitalize()
                     for x in data.columns}, inplace=True)
         
-        data['Date2'] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+        data['Date2'] = pd.to_datetime(data.Date.astype(
+            str)).apply(lambda x: x.strftime(f'%Y-%m-%d {PRICING_CONFIG["MARKET_CLOSE_TIME"]}'))
         data['Date3'] = data.Date2
         data['datetime'] = pd.to_datetime(data.Date3)
         data.set_index('datetime', inplace=True)
@@ -480,7 +488,7 @@ def retrieve_bulk_eod(
 
 
   
-def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = '9:30', print_url=False, end_time='16:00', ts = False, proxy = proxy_url, **kwargs):
+def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], print_url=False, end_time=PRICING_CONFIG['MARKET_CLOSE_TIME'], ts = False, proxy = proxy_url, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
@@ -538,7 +546,7 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: s
         # # print(data.columns)
         data['time'] = data['Ms_of_day'].apply(lambda c: convert_milliseconds(c))
         data['Date2'] = pd.to_datetime(data.Date.astype(
-            str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+            str)).apply(lambda x: x.strftime('%Y-%m-%d'))  ## Change this to "%Y-%m-%d %H:%M:%S"
         data['Date3'] = data.Date2 + ' ' + data.time
         data['datetime'] = pd.to_datetime(data.Date3)
         data.set_index('datetime', inplace=True)
@@ -552,9 +560,9 @@ def retrieve_quote(symbol,
                    right: str, 
                    start_date: str, 
                    strike: float, 
-                   start_time: str = '9:30', 
+                   start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], 
                    print_url=False, 
-                   end_time='16:00',
+                   end_time=PRICING_CONFIG['MARKET_CLOSE_TIME'],
                    interval = '30m', 
                    proxy = proxy_url,
                    **kwargs):
@@ -688,7 +696,7 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
         # # # print(data.columns)
         data['time'] = data['Ms_of_day'].apply(convert_milliseconds)
         data['Date2'] = pd.to_datetime(data.Date.astype(
-            str)).apply(lambda x: x.strftime('%Y-%m-%d'))
+            str)).apply(lambda x: x.strftime(f'%Y-%m-%d {PRICING_CONFIG["MARKET_CLOSE_TIME"]}'))
         data['Date3'] = data.Date2
         data['Datetime'] = pd.to_datetime(data.Date3)
         data.drop(columns=[ 'Date2', 'Date3', 'Ms_of_day'], inplace=True)
@@ -722,7 +730,7 @@ def retrieve_bulk_open_interest(
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs['depth'] += 1
-        return resolve_ticker_history(pass_kwargs, retrieve_bulk_eod, _type = 'historical')
+        return resolve_ticker_history(pass_kwargs, retrieve_bulk_open_interest, _type = 'historical')
 
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
@@ -837,15 +845,48 @@ async def retrieve_openInterest_async(symbol, end_date: str, exp: str, right: st
 
 
 
-def resample(data, interval, custom_agg_columns = None):
+def resample(data, interval, custom_agg_columns = None, method = 'ffill', **kwargs):
 
     """
     Resamples to a specific interval size
     ps: ffills missing values
+
+    parameters
+    ----------
+    data : pd.DataFrame or pd.Series
+        Data to be resampled
+
+    interval : str
+        Interval to resample to. Can be a string like '1m', '5m', '1h', '1d', etc.
+        or a number followed by a letter, e.g. '5m' or '1h'
+
+    custom_agg_columns : dict, optional
+        Custom aggregation dictionary to use for resampling. The default is None, which uses the default aggregation functions.
+        The dictionary should have the format {'column_name': 'agg_func'} where 'agg_func' is a string representing the aggregation function to use.
+
+    Returns
+    -------
+    pd.DataFrame or pd.Series
+        Resampled data.
     """
-    
+
+    ## Will allow for custom aggregation functions, using this resample function
+    if isinstance(data.index, pd.MultiIndex):
+        logger.info('Resampling a MultiIndex')
+        if len(data.index.names) == 2:
+            try:
+                datetime_col_name = kwargs['datetime_col_name']
+            except KeyError:
+                logger.critical('`datetime_col_name` not provided for multi index resample, setting to `Datetime`')
+                datetime_col_name = 'Datetime'
+            
+            return _handle_multi_index_resample(data, datetime_col_name, interval, resample_col = custom_agg_columns)
+        
+        else:
+            raise NotImplementedError('Currently only supports multi index with 2 levels')
+        
     string, integer = extract_numeric_value(interval)
-    TIMEFRAME_MAP = {'d': 'B', 'h': 'H', 'm': 'MIN',
+    TIMEFRAME_MAP = {'d': 'B', 'h': 'BH', 'm': 'MIN',
                      'M': 'BME', 'w': 'W-FRI', 'q': 'BQE', 'y': 'BYS'}
     
     if custom_agg_columns:
@@ -858,27 +899,71 @@ def resample(data, interval, custom_agg_columns = None):
 
     assert string in TIMEFRAME_MAP.keys(
     ), f"Available Timeframe Alias are {TIMEFRAME_MAP.keys()}, recieved '{string}'"
-    interval = f"{integer}{TIMEFRAME_MAP[string]}"
+    
+    ## Add EOD time is DateTimeIndex is EOD Series
+    data.index = add_eod_timestamp(data.index)
     if isinstance(data, pd.DataFrame):
-        if string == 'h':
-            data = data.resample(f'{integer*60}T', origin='start_day', offset = '30min').agg(
-                columns).ffill()
-            data = data[(data.index.time >= pd.Timestamp('9:00').time()) & (data.index.time <= pd.Timestamp('16:00').time()) ]
-            return data.fillna(0)
-        else:
-            data = data.resample(f'{integer}{TIMEFRAME_MAP[string]}').agg(
-                columns).ffill()
-        return data.fillna(0)
+        resampled = []
+
+        for col in data.columns:
+            if col in columns.keys():
+                resampled.append(resample(data[col], interval, method=columns[col]))
+            else:
+                resampled.append(resample(data[col], interval, method=method))
+        data = pd.concat(resampled, axis=1)
+        data.columns = [col for col in data.columns]
+        return enforce_bus_hours(data.fillna(0))
 
     elif isinstance(data, pd.Series):
         if string == 'h':
-            data = data.resample(f'{integer*60}T', offset='30min', origin='start_day').ffill()
+            data = data.resample(f'{integer*60}T', origin=PRICING_CONFIG['MARKET_OPEN_TIME']).__getattr__(method)()
         else:
+            data = data.resample(f'{integer}{TIMEFRAME_MAP[string]}').__getattr__(method)()
+        return enforce_bus_hours(data.fillna(0))
 
-            data = data.resample(f'{integer}{TIMEFRAME_MAP[string]}').agg(
-                columns).ffill()
-        return data.fillna(0)
-# Function to convert milliseconds to hours, minutes, seconds, and milliseconds
+
+def _handle_multi_index_resample(
+        data: pd.DataFrame,
+        datetime_col_name: str,
+        interval: str,
+        resample_col: str,
+) -> pd.DataFrame:
+    """
+    Handle the edge case where the data is a multi index and we need to resample it
+
+    Args:
+        data: The data to resample
+        datetime_col_name: The name of the datetime column
+        interval: The interval to resample to
+        resample_col: The column to resample
+    """
+    assert len(data.index.names) == 2, f"Currently only supports multi index with 2 levels, got {len(data.index.names)}"
+
+    ## Save the order of the MultiIndex
+    idx_names = list(data.index.names)
+
+    ## Provide a split by to resample off
+    split_by = deepcopy(idx_names)
+    split_by.remove(datetime_col_name)
+
+    ## Break down the data into smaller chunks
+    pack_data = dict(tuple(data.groupby(level = split_by)))
+    resampled_data_list = []
+
+    ## Resample Individual Data
+    for k, v in pack_data.items():
+        data = v.copy()
+        data = data.reset_index().set_index(datetime_col_name)
+        data = resample( data, interval, resample_col)
+        data[split_by] = data[split_by].replace(0, k)
+        data.set_index(split_by, inplace = True, append = True)
+        resampled_data_list.append(data)
+
+    resampled_data = pd.concat(resampled_data_list, axis=0)
+    return resampled_data
+
+
+
 
 
 def convert_milliseconds(ms):

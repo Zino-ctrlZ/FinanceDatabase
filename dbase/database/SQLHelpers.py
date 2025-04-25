@@ -36,13 +36,17 @@ This module is responsible for organizing all functions necessary for accessing/
 
 logger = setup_logger('SQLHelpers.py')  # Using a module-specific logger
 
+dbs = ['securities_master', 'vol_surface']
+
 def create_engine_short(db):
     return create_engine(f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}")
+
+SQL_ENGINES = {x: create_engine_short(x) for x in dbs} ## Create a dictionary of SQL engines for each database
 
 
 def store_SQL_data(db, sql_table_name, data, if_exists='append'):
     # ADD INITIAL DATA TO DATABASE
-    engine = create_engine_short(db)
+    engine = SQL_ENGINES[db]
     data.to_sql(sql_table_name, engine, if_exists=if_exists, index=False)
     print('Data successfully saved', end = '\r')
 
@@ -81,7 +85,7 @@ def drop_SQL_Table_Duplicates(db, sql_table_name):
 
 
 def query_database(db, tbl_name, query):
-    engine = create_engine_short(db)
+    engine = SQL_ENGINES[db]
     return pd.read_sql(query, engine)
 
 
@@ -231,8 +235,7 @@ def create_table_from_schema(engine, table_schema):
 
 
 def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
-    engine = create_engine_short(db)
-
+    engine =SQL_ENGINES[db]
     with engine.begin() as connection:
         connection.execute(text(f"""
             CREATE TEMPORARY TABLE temp LIKE {sql_table_name};
@@ -268,7 +271,7 @@ def dynamic_batch_update(db, table_name, update_values, condition):
     - condition: Dictionary of conditions for the WHERE clause.
     """
 
-    engine = create_engine_short(db)
+    engine = SQL_ENGINES[db]
     # Create the SET clause
     set_clause = ", ".join([f"{col} = :{col}" for col in update_values.keys()])
 
@@ -301,7 +304,7 @@ def execute_query(db, table_name, query, params=None):
     - params: Dictionary of parameters for the query (optional).
     """
 
-    engine = create_engine_short(db)
+    engine = SQL_ENGINES[db]
 
     # Prepare the query
     query = text(query)
@@ -333,23 +336,7 @@ class DatabaseAdapter:
 
         ## Filter duplicate data
         data = data.drop_duplicates()
-
-        ## Use to check if there are duplicates
-        # if 'option_tick' in data.columns:
-        #     print('Duplicated Rows',len(data[['build_date', 'option_tick']].duplicated()), '                   ')
-        #     if len(data[['build_date', 'option_tick']].duplicated()) > 0:
-        #         print('Dropped Duplicates')
-        #         data = data.drop_duplicates()
-        #         print(data[['build_date', 'option_tick']].duplicated())
-
-        #     if 'spot' not in data.columns:
-        #         print('Spot not in columns')
-        #     else:
-        #         print('Spot in columns')
-
-        ## Ensure no null values
         data = data.dropna()
-
 
         ## Ensure no duplicate columns
         data.columns = data.columns.str.lower()
@@ -363,31 +350,3 @@ class DatabaseAdapter:
         data.drop(columns = dup_names, inplace = True)
 
         return data
-
-
-# from sqlalchemy import create_engine
-# from sqlalchemy.pool import QueuePool
-
-# # # Configure the engine with a connection pool
-# # engine = create_engine(
-# #     f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}",
-# #     poolclass=QueuePool,  # Use a QueuePool for connection pooling
-# #     pool_size=5,          # Number of connections to maintain
-# #     max_overflow=10,      # Maximum additional connections beyond pool_size
-# #     pool_timeout=30,      # Wait time before giving up on a connection
-# # )
-
-# def query_database(db, tbl_name, query):
-
-#         # Configure the engine with a connection pool
-#     engine = create_engine(
-#         f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}",
-#         poolclass=QueuePool,  # Use a QueuePool for connection pooling
-#         pool_size=20,          # Number of connections to maintain
-#         max_overflow=10,      # Maximum additional connections beyond pool_size
-#         pool_timeout=30,      # Wait time before giving up on a connection
-#     )
-
-
-#     with engine.begin() as connection:
-#         return pd.read_sql(query, connection)
