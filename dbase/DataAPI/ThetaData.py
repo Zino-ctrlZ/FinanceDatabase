@@ -19,6 +19,10 @@ import numpy as np
 from dbase.utils import add_eod_timestamp, enforce_bus_hours, PRICING_CONFIG
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, verify_ticker
 from copy import deepcopy
+from .ThetaExceptions import *
+
+import backoff
+
 
     ##To-Do: Add a data cleaning function to remove zeros and inf and check for other anomalies. 
     ## In the function, add a logger to log the anomalies
@@ -27,8 +31,21 @@ This Module is responsible for organizing all functions related to accessing dat
 
 """
 
+_SHOULD_SCHEDULE = True
+def set_should_schedule(should_schedule):
+    print(f'Setting should_schedule to {should_schedule}')
+    global _SHOULD_SCHEDULE
+    _SHOULD_SCHEDULE = should_schedule
+
+def get_should_schedule():
+    return _SHOULD_SCHEDULE
+
+def schedule_kwargs(kwargs):
+    from module_test.raw_code.DataManagers.SaveManager import SaveManager
+    SaveManager.schedule(kwargs=kwargs)
 
 logger = setup_logger('dbase.DataAPI.ThetaData')
+duplicated_logger = setup_logger('dbase.DataAPI.ThetaData.duplicated')
 proxy_url = os.environ.get('PROXY_URL') if os.environ.get('PROXY_URL') else None
 
 if proxy_url is None:
@@ -131,6 +148,11 @@ def quote_snapshot(symbol, proxy = proxy_url):
         response = requests.get(url, headers=headers, params=querystring)
     return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
+
+@backoff.on_exception(backoff.expo, 
+                      (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
+                      max_tries=5, 
+                      logger=logger)
 def list_contracts(symbol, start_date, print_url = False, proxy = proxy_url, **kwargs):
     pass_kwargs = {'start_date': start_date, 'symbol': symbol, 'print_url': print_url}
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0) 
@@ -148,6 +170,7 @@ def list_contracts(symbol, start_date, print_url = False, proxy = proxy_url, **k
         print(response_url) if print_url else None
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        raise_thetadata_exception(response, querystring, proxy)
         print(response.url) if print_url else None
 
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
@@ -176,7 +199,10 @@ def extract_numeric_value(timeframe_str):
     strings = [str(letter) for _, letter in match][0]
     return strings, integers
 
-
+@backoff.on_exception(backoff.expo, 
+                      (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
+                      max_tries=5, 
+                      logger=logger)
 def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], print_url=False, proxy: str = proxy_url):
     """
     Interval size in miliseconds. 1 minute is 6000
@@ -204,6 +230,7 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, 
         print(response_url) if print_url else None
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        raise_thetadata_exception(response, querystring, proxy)
         print(response.url) if print_url else None
 
 
@@ -259,12 +286,22 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, 
 
     return data
 
-
+@backoff.on_exception(backoff.expo, 
+                      (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
+                      max_tries=5, 
+                      logger=logger)
 def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, print_url=False, rt=True, proxy = proxy_url, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
+
+    ## Scheduling to update to database
+    start_date_str, end_date_str = deepcopy(start_date), deepcopy(end_date)
+    sm_kwargs = dict(exp=exp, right=right, strike=strike, start=start_date_str, end=end_date_str, tick=symbol, type_ = 'single', save_func = 'save_to_database')
+    schedule_kwargs(sm_kwargs) if get_should_schedule() else None
+
+    ## Start processing
     pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 'strike': strike, 'print_url': print_url}
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
@@ -287,6 +324,7 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
         print(response_url) if print_url else None
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        raise_thetadata_exception(response, querystring, proxy)
         print(response.url) if print_url else None
 
 
@@ -329,7 +367,7 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
         data.index.name = 'Datetime'
         # data = data[data[['Open', 'High', 'Low', 'Close', 'Bid_size',
         #                   'CloseBid', 'Ask_size', 'CloseAsk']].sum(axis=1) != 0]
-        
+
 
     return data
 
@@ -361,6 +399,7 @@ async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, s
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        raise_thetadata_exception(response, querystring, proxy)
 
 
     end_timer = time.time()
@@ -407,7 +446,10 @@ async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, s
     return data
 
   
-
+@backoff.on_exception(backoff.expo, 
+                      (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
+                      max_tries=5, 
+                      logger=logger)
 def retrieve_bulk_eod(
     symbol,
     exp,
@@ -448,6 +490,8 @@ def retrieve_bulk_eod(
         response = request_from_proxy(url, querystring, proxy, print_url)
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        raise_thetadata_exception(response, querystring, proxy)
+
     end_timer = time.time()
     if (end_timer - start_timer) > 4:
             logger.info('')
@@ -487,7 +531,10 @@ def retrieve_bulk_eod(
     return data
 
 
-  
+@backoff.on_exception(backoff.expo, 
+                      (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
+                      max_tries=5, 
+                      logger=logger)
 def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], print_url=False, end_time=PRICING_CONFIG['MARKET_CLOSE_TIME'], ts = False, proxy = proxy_url, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
@@ -521,6 +568,7 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: s
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        raise_thetadata_exception(response, querystring, proxy)
     end_timer = time.time()
 
     if (end_timer - start_timer) > 4:
@@ -554,6 +602,11 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: s
 
     return data
 
+
+@backoff.on_exception(backoff.expo, 
+                      (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
+                      max_tries=5, 
+                      logger=logger)
 def retrieve_quote(symbol, 
                    end_date: str, 
                    exp: str, 
@@ -601,6 +654,7 @@ def retrieve_quote(symbol,
         print(response_url) if print_url else None
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        raise_thetadata_exception(response, querystring, proxy)
         print(response.url) if print_url else None
     end_timer = time.time()
 
@@ -639,7 +693,10 @@ def retrieve_quote(symbol,
     return data
 
 
-
+@backoff.on_exception(backoff.expo, 
+                      (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
+                      max_tries=5, 
+                      logger=logger)
 def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float,  print_url=False, proxy = proxy_url, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
@@ -677,6 +734,7 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
         response = request_from_proxy(url, querystring, proxy, print_url=print_url)
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        raise_thetadata_exception(response, querystring, proxy)
 
         
     if not __isSuccesful(response.status_code):
@@ -700,6 +758,12 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
         data['Date3'] = data.Date2
         data['Datetime'] = pd.to_datetime(data.Date3)
         data.drop(columns=[ 'Date2', 'Date3', 'Ms_of_day'], inplace=True)
+        
+        if data.Datetime.duplicated().any():
+            duplicated_logger.info(f'Duplicated index found for {symbol}, {exp}, {right}, {strike}')
+            duplicated_logger.info(f"url: {response.url}")
+            data = data[~data.Datetime.duplicated(keep='last')] ## Last timestamp
+
     except Exception as e:
         logger.error('') 
         logger.error(f'Error in retrieve_openInterest. Error: {e}')
@@ -709,7 +773,10 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
         raise e
     return data
 
-
+@backoff.on_exception(backoff.expo, 
+                      (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
+                      max_tries=5, 
+                      logger=logger)
 def retrieve_bulk_open_interest(
     symbol,
     exp,
@@ -750,6 +817,7 @@ def retrieve_bulk_open_interest(
         response = request_from_proxy(url, querystring, proxy, print_url)
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        raise_thetadata_exception(response, querystring, proxy)
     end_timer = time.time()
     if (end_timer - start_timer) > 4:
             logger.info('')
@@ -900,8 +968,9 @@ def resample(data, interval, custom_agg_columns = None, method = 'ffill', **kwar
     assert string in TIMEFRAME_MAP.keys(
     ), f"Available Timeframe Alias are {TIMEFRAME_MAP.keys()}, recieved '{string}'"
     
-    ## Add EOD time is DateTimeIndex is EOD Series
-    data.index = add_eod_timestamp(data.index)
+    ## Add EOD time if DateTimeIndex is EOD Series (Dunno why I did this, so taking it for now)
+    ## If I remember, will write it here.
+    # data.index = add_eod_timestamp(data.index) 
     if isinstance(data, pd.DataFrame):
         resampled = []
 
@@ -1021,7 +1090,10 @@ def __isSuccesful(status_code: int):
 def is_theta_data_retrieval_successful(response): 
     return type(response) != str 
 
-
+@backoff.on_exception(backoff.expo, 
+                      (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
+                      max_tries=5, 
+                      logger=logger)
 def retrieve_chain_bulk(symbol, 
                         exp, 
                         start_date, 
@@ -1070,6 +1142,7 @@ def retrieve_chain_bulk(symbol,
         response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
     else:
         response = requests.get(url, headers=headers, params=querystring)
+        raise_thetadata_exception(response, querystring, proxy)
         response_url = response.url
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     end_timer = time.time()

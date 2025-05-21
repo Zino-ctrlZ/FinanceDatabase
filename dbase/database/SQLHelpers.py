@@ -2,19 +2,22 @@ import logging
 import sys, os
 from dotenv import load_dotenv  
 load_dotenv()
-sys.path.extend(
-    [ os.environ['DBASE_DIR'],  os.environ['WORK_DIR']])
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, Date, Float, Boolean, Enum, Time, DateTime, TIMESTAMP, PrimaryKeyConstraint
 from sqlalchemy import create_engine, text
+import pymysql
+import pandas as pd
 from mysql.connector import Error
 import sys
 import pandas as pd
 from datetime import datetime
-from trade.helpers.helper import setup_logger
+from trade.helpers.helper import setup_logger, _ipython_shutdown
 import mysql.connector
 import os
+from functools import lru_cache
 from dotenv import load_dotenv
+import atexit
+import signal
 load_dotenv()
 sql_pw = (os.environ.get('MYSQL_PASSWORD'))
 sql_host = (os.environ.get('MYSQL_HOST'))
@@ -35,23 +38,103 @@ This module is responsible for organizing all functions necessary for accessing/
 # logger.propagate = True  # Ensure it propagates to the root logger
 
 logger = setup_logger('SQLHelpers.py')  # Using a module-specific logger
-
+_PROCESS_ENGINE_CACHE = {}
+_PYMYSQL_CONNECTION_CACHE = {}
 dbs = ['securities_master', 'vol_surface']
 
+
 def create_engine_short(db):
+    """
+    Create a SQLAlchemy engine for the given database.
+    """
     return create_engine(f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}")
 
-SQL_ENGINES = {x: create_engine_short(x) for x in dbs} ## Create a dictionary of SQL engines for each database
+def create_pymysql_connection(db):
+    """
+    Create a pymysql connection for the given database.
+    """
+    connection = pymysql.connect(host=sql_host,
+                                 user=sql_user,
+                                 password=sql_pw,
+                                 database=db,
+                                 cursorclass=pymysql.cursors.DictCursor)
+    return connection
 
+def get_engine(db_name):
+    """
+    Get a SQLAlchemy engine for the given database name and process ID. This saves to a cache to avoid creating multiple engines for the same database in the same process.
+    """
+    pid = os.getpid()
+    key = (pid, db_name)
+
+    if key not in _PROCESS_ENGINE_CACHE:
+        print(f"[get_engine] Creating engine for DB: {db_name}, PID: {pid}")
+        _PROCESS_ENGINE_CACHE[key] = create_engine_short(db_name)
+
+    return _PROCESS_ENGINE_CACHE[key]
+
+def get_pymysql_connection(db_name):
+    """
+    Get a pymysql connection for the given database name and process ID. This saves to a cache to avoid creating multiple connections for the same database in the same process.
+    """
+    pid = os.getpid()
+    key = (pid, db_name)
+
+    if key not in _PYMYSQL_CONNECTION_CACHE:
+        print(f"[get_pymysql_connection] Creating connection for DB: {db_name}, PID: {pid}")
+        _PYMYSQL_CONNECTION_CACHE[key] = create_pymysql_connection(db_name)
+
+    return _PYMYSQL_CONNECTION_CACHE[key]
+
+
+def _dispose_all_engines():
+    """
+    Dispose all SQLAlchemy engines and close all pymysql connections.
+    """
+    for engine in _PROCESS_ENGINE_CACHE.values():
+        try:
+            engine.dispose()
+            with open(f'{os.environ["WORK_DIR"]}/logs/atexit.log', 'r') as f:
+                f.write(f"Engine disposed: {engine}\n")
+        except Exception:
+            pass
+    for conn in _PYMYSQL_CONNECTION_CACHE.values():
+        try:
+            conn.close()
+            with open(f'{os.environ["WORK_DIR"]}/logs/atexit.log', 'r') as f:
+                f.write(f"Connection closed: {conn}\n")
+        except Exception:
+            pass
+
+def signal_exit_handler(signum, frame):
+    """
+    Signal handler for graceful shutdown. It disposes all engines and closes all connections before exiting.
+    """
+
+    _dispose_all_engines()
+    os.kill(os.getpid(), signum)
+
+## .py exit kill with atexit
+atexit.register(_dispose_all_engines)
+
+##.py exit kill with signal
+signal.signal(signal.SIGTERM, signal_exit_handler)
 
 def store_SQL_data(db, sql_table_name, data, if_exists='append'):
-    # ADD INITIAL DATA TO DATABASE
-    engine = SQL_ENGINES[db]
+    """
+    Store data in a SQL table. If the table does not exist, it will be created.
+    """
+    engine = get_engine(db)
     data.to_sql(sql_table_name, engine, if_exists=if_exists, index=False)
     print('Data successfully saved', end = '\r')
 
 
 def drop_SQL_Table_Duplicates(db, sql_table_name):
+    """
+    Drop duplicates from a SQL table and replace the original table with the non-duplicated data.
+    """
+    
+    
     # RE-QUERY WHOLE DATA
     df = query_database(db, sql_table_name,
                         f"SELECT * FROM {db}.{sql_table_name}")
@@ -85,8 +168,27 @@ def drop_SQL_Table_Duplicates(db, sql_table_name):
 
 
 def query_database(db, tbl_name, query):
-    engine = SQL_ENGINES[db]
+    """
+    Query the database using SQLAlchemy and return the result as a pandas DataFrame.
+    """
+
+    engine = get_engine(db)
     return pd.read_sql(query, engine)
+
+def _query_database_testing(db,tbl_name, query):
+    """
+    Query the database using pymysql and return the result as a pandas DataFrame.
+    """
+
+    conn = get_pymysql_connection(db)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query)
+            rows = cur.fetchall()                   # this is a list of dicts
+        return pd.DataFrame.from_records(rows)     # “fast path” into a DataFrame
+    except pymysql.Error as e:
+        logger.error(f"Error executing query: {e}")
+        raise e
 
 
 def create_SQL_connection():
@@ -235,7 +337,11 @@ def create_table_from_schema(engine, table_schema):
 
 
 def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
-    engine =SQL_ENGINES[db]
+    """
+    Store data in a SQL table using INSERT IGNORE. If the table does not exist, it will be created.
+    """
+    engine =create_engine_short(db)
+    print(f"Size to be inserted: {len(data)}")
     with engine.begin() as connection:
         connection.execute(text(f"""
             CREATE TEMPORARY TABLE temp LIKE {sql_table_name};
@@ -271,7 +377,7 @@ def dynamic_batch_update(db, table_name, update_values, condition):
     - condition: Dictionary of conditions for the WHERE clause.
     """
 
-    engine = SQL_ENGINES[db]
+    engine = get_engine(db)
     # Create the SET clause
     set_clause = ", ".join([f"{col} = :{col}" for col in update_values.keys()])
 
@@ -304,7 +410,7 @@ def execute_query(db, table_name, query, params=None):
     - params: Dictionary of parameters for the query (optional).
     """
 
-    engine = SQL_ENGINES[db]
+    engine = get_engine(db)
 
     # Prepare the query
     query = text(query)
@@ -333,6 +439,19 @@ class DatabaseAdapter:
 
         ## To-doL Add a warning log here for dropping second duplicate columns
         data.columns = [col.lower() for col in data.columns]
+        
+        ## Print Data Info
+        na_rows = data.isna().any(axis=1).sum()
+        na_cols = data.isna().any(axis = 0)
+        
+        print("Columns with NaN") if na_rows else None
+        print(na_cols[na_cols==True]) if na_rows else None
+        print(f"Rows with at least one NA: {na_rows}") if na_rows else None
+
+        dup_rows = data.duplicated().sum()
+        print(f"Fully duplicated rows: {dup_rows}") if dup_rows else None
+
+
 
         ## Filter duplicate data
         data = data.drop_duplicates()
