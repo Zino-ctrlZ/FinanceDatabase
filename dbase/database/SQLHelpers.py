@@ -91,19 +91,23 @@ def _dispose_all_engines():
     """
     Dispose all SQLAlchemy engines and close all pymysql connections.
     """
-    for engine in _PROCESS_ENGINE_CACHE.values():
+    for pid, engine in _PROCESS_ENGINE_CACHE.items():
         try:
             engine.dispose()
-            with open(f'{os.environ["WORK_DIR"]}/logs/atexit.log', 'r') as f:
-                f.write(f"Engine disposed: {engine}\n")
-        except Exception:
+            with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
+                f.write(f"Engine disposed: {str(pid)}\n")
+        except Exception as e:
+            with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
+                f.write(f"Error Disposing Engine: {str(pid)}, {e}\n")
             pass
     for conn in _PYMYSQL_CONNECTION_CACHE.values():
         try:
             conn.close()
-            with open(f'{os.environ["WORK_DIR"]}/logs/atexit.log', 'r') as f:
-                f.write(f"Connection closed: {conn}\n")
-        except Exception:
+            with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
+                f.write(f"Connection closed: {str(pid)}\n")
+        except Exception as e:
+            with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
+                f.write(f"Error Closing Connection: {str(pid)}, {e}\n")
             pass
 
 def signal_exit_handler(signum, frame):
@@ -112,7 +116,7 @@ def signal_exit_handler(signum, frame):
     """
 
     _dispose_all_engines()
-    os.kill(os.getpid(), signum)
+    sys.exit(0)  # Exit the program gracefully
 
 ## .py exit kill with atexit
 atexit.register(_dispose_all_engines)

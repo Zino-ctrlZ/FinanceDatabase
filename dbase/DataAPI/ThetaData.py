@@ -59,7 +59,7 @@ def resolve_ticker_history(kwargs, _callable, _type = 'historical'):
     if _type == 'historical':
         tick = kwargs['symbol']
         change_date = TICK_CHANGE_ALIAS[tick][-1]
-        old_tick = TICK_CHANGE_ALIAS[tick][0]
+        old_tick = TICK_CHANGE_ALIAS[tick][1]
         new_tick = TICK_CHANGE_ALIAS[tick][1]
         old_tick_kwargs = deepcopy(kwargs)
         new_tick_kwargs = deepcopy(kwargs)
@@ -168,6 +168,7 @@ def list_contracts(symbol, start_date, print_url = False, proxy = proxy_url, **k
         response = request_from_proxy(url, querystring, proxy)
         response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
         print(response_url) if print_url else None
+        raise_thetadata_exception(response, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
@@ -228,6 +229,7 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, 
         response = request_from_proxy(url, querystring, proxy)
         response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
         print(response_url) if print_url else None
+        raise_thetadata_exception(response, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
@@ -322,6 +324,7 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
         response = request_from_proxy(url, querystring, proxy)
         response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
         print(response_url) if print_url else None
+        raise_thetadata_exception(response, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
@@ -397,6 +400,9 @@ async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, s
 
     if proxy:
         response = request_from_proxy(url, querystring, proxy)
+        response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
+        print(response_url) if print_url else None
+        raise_thetadata_exception(response, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
@@ -488,6 +494,9 @@ def retrieve_bulk_eod(
     start_timer = time.time()
     if proxy:
         response = request_from_proxy(url, querystring, proxy, print_url)
+        response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
+        print(response_url) if print_url else None
+        raise_thetadata_exception(response, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
@@ -566,6 +575,9 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: s
     start_timer = time.time()
     if proxy:
         response = request_from_proxy(url, querystring, proxy)
+        response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
+        print(response_url) if print_url else None
+        raise_thetadata_exception(response, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
@@ -652,6 +664,7 @@ def retrieve_quote(symbol,
         response = request_from_proxy(url, querystring, proxy)
         response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
         print(response_url) if print_url else None
+        raise_thetadata_exception(response, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
@@ -732,6 +745,9 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
 
     if proxy:
         response = request_from_proxy(url, querystring, proxy, print_url=print_url)
+        response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
+        print(response_url) if print_url else None
+        raise_thetadata_exception(response, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
@@ -815,6 +831,9 @@ def retrieve_bulk_open_interest(
     start_timer = time.time()
     if proxy:
         response = request_from_proxy(url, querystring, proxy, print_url)
+        response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
+        print(response_url) if print_url else None
+        raise_thetadata_exception(response, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
@@ -1140,10 +1159,13 @@ def retrieve_chain_bulk(symbol,
     if proxy:
         response = request_from_proxy(url, querystring, proxy, print_url)
         response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}" 
+        print(response_url) if print_url else None
+        raise_thetadata_exception(response, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
         response_url = response.url
+        print(response_url) if print_url else None
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     end_timer = time.time()
     if (end_timer - start_timer) > 4:

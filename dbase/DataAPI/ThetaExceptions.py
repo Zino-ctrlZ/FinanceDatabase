@@ -1,6 +1,6 @@
 import backoff
 from trade.helpers.Logging import setup_logger
-logger = setup_logger('dbase.DataAPI.ThetaExceptions.log')
+logger = setup_logger('dbase.DataAPI.ThetaExceptions')
 
 class ThetDataNoImplementation(Exception):
     """Exception raised when the data is not available/not implemented."""
