@@ -17,7 +17,8 @@ import json
 from datetime import time as dtTime
 import numpy as np
 from dbase.utils import add_eod_timestamp, enforce_bus_hours, PRICING_CONFIG
-from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, verify_ticker
+from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, verify_ticker, swap_ticker
+from trade.helpers.helper import compare_dates
 from copy import deepcopy
 from .ThetaExceptions import *
 
@@ -32,6 +33,8 @@ This Module is responsible for organizing all functions related to accessing dat
 """
 
 _SHOULD_SCHEDULE = True
+
+
 def set_should_schedule(should_schedule):
     print(f'Setting should_schedule to {should_schedule}')
     global _SHOULD_SCHEDULE
@@ -59,7 +62,7 @@ def resolve_ticker_history(kwargs, _callable, _type = 'historical'):
     if _type == 'historical':
         tick = kwargs['symbol']
         change_date = TICK_CHANGE_ALIAS[tick][-1]
-        old_tick = TICK_CHANGE_ALIAS[tick][1]
+        old_tick = TICK_CHANGE_ALIAS[tick][0]
         new_tick = TICK_CHANGE_ALIAS[tick][1]
         old_tick_kwargs = deepcopy(kwargs)
         new_tick_kwargs = deepcopy(kwargs)
@@ -67,8 +70,22 @@ def resolve_ticker_history(kwargs, _callable, _type = 'historical'):
         new_tick_kwargs['symbol'] = new_tick
 
         ## Retrieve the data for the old tick
-        old_tick_data = _callable(**old_tick_kwargs) if pd.Timestamp(change_date) > pd.Timestamp(kwargs['start_date']) else None
-        new_tick_data = _callable(**new_tick_kwargs) if pd.Timestamp(change_date) <= pd.Timestamp(kwargs['end_date']) else None
+        try:
+            old_tick_data = _callable(**old_tick_kwargs) if compare_dates.is_before(pd.Timestamp(kwargs['start_date']), pd.Timestamp(change_date)) else None
+            old_tick_data = old_tick_data[old_tick_data.index.duplicated(keep = 'first')] if old_tick_data is not None else None
+        except ThetaDataNotFound as e:
+            logger.error(f'No data found for Old_tick {old_tick} on {kwargs["start_date"]}')
+            logger.error(f'Error: {e}')
+            old_tick_data = None
+        
+        ## Retrieve the data for the new tick
+        try:
+            new_tick_data = _callable(**new_tick_kwargs) if compare_dates.is_on_or_after(pd.Timestamp(kwargs['exp']), pd.Timestamp(change_date)) else None ## Opting for expiration date instead of end date cause data cannot go beyond expiration date
+            new_tick_data = new_tick_data[new_tick_data.index.duplicated(keep = 'first')] if new_tick_data is not None else None
+        except ThetaDataNotFound as e:
+            logger.error(f'No data found for new_tick {new_tick} on {kwargs["exp"]}')
+            logger.error(f'Error: {e}')
+            new_tick_data = None
 
         ## If no data is found for the old tick, then we will just return the new tick data. Change to dataframe to avoid errors when concatenating
         if old_tick_data is None:
@@ -86,7 +103,7 @@ def resolve_ticker_history(kwargs, _callable, _type = 'historical'):
         old_tick = TICK_CHANGE_ALIAS[tick][0]
         new_tick = TICK_CHANGE_ALIAS[tick][1]
         new_tick_kwargs = deepcopy(kwargs)
-        new_tick_kwargs['symbol'] = old_tick if pd.Timestamp(kwargs['start_date']) <= pd.Timestamp(change_date) else new_tick
+        new_tick_kwargs['symbol'] = old_tick if compare_dates.is_before(pd.Timestamp(kwargs['start_date']), pd.Timestamp(change_date)) else new_tick 
         return _callable(**new_tick_kwargs)
 
 
@@ -1201,5 +1218,4 @@ def retrieve_chain_bulk(symbol,
         columns = ['Root', 'Expiration', 'Strike', 'Right', 'Bid_size', 'CloseBid',  'Ask_size', 
             'CloseAsk', 'Date', 'Midpoint', 'Weighted_midpoint']
         data = data[columns]
-        
     return data

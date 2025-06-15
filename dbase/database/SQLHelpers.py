@@ -12,6 +12,7 @@ import sys
 import pandas as pd
 from datetime import datetime
 from trade.helpers.helper import setup_logger, _ipython_shutdown
+from trade import register_signal
 import mysql.connector
 import os
 from functools import lru_cache
@@ -87,7 +88,7 @@ def get_pymysql_connection(db_name):
     return _PYMYSQL_CONNECTION_CACHE[key]
 
 
-def _dispose_all_engines():
+def _dispose_all_engines(*args, **kwargs):
     """
     Dispose all SQLAlchemy engines and close all pymysql connections.
     """
@@ -95,19 +96,19 @@ def _dispose_all_engines():
         try:
             engine.dispose()
             with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
-                f.write(f"Engine disposed: {str(pid)}\n")
+                f.write(f"Engine disposed: {str(pid)} on {datetime.now()}\n")
         except Exception as e:
             with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
-                f.write(f"Error Disposing Engine: {str(pid)}, {e}\n")
+                f.write(f"Error Disposing Engine: {str(pid)}, {e} on {datetime.now()}\n")
             pass
     for conn in _PYMYSQL_CONNECTION_CACHE.values():
         try:
             conn.close()
             with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
-                f.write(f"Connection closed: {str(pid)}\n")
+                f.write(f"Connection closed: {str(pid)} on {datetime.now()}\n")
         except Exception as e:
             with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
-                f.write(f"Error Closing Connection: {str(pid)}, {e}\n")
+                f.write(f"Error Closing Connection: {str(pid)}, {e} on {datetime.now()}\n")
             pass
 
 def signal_exit_handler(signum, frame):
@@ -122,7 +123,8 @@ def signal_exit_handler(signum, frame):
 atexit.register(_dispose_all_engines)
 
 ##.py exit kill with signal
-signal.signal(signal.SIGTERM, signal_exit_handler)
+# signal.signal(signal.SIGTERM, signal_exit_handler)
+register_signal(signal.SIGTERM, _dispose_all_engines)
 
 def store_SQL_data(db, sql_table_name, data, if_exists='append'):
     """
