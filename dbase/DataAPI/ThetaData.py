@@ -33,7 +33,7 @@ This Module is responsible for organizing all functions related to accessing dat
 """
 
 _SHOULD_SCHEDULE = True
-
+proxy_url = None ## Initial initiation
 
 def set_should_schedule(should_schedule):
     print(f'Setting should_schedule to {should_schedule}')
@@ -49,12 +49,21 @@ def schedule_kwargs(kwargs):
 
 logger = setup_logger('dbase.DataAPI.ThetaData')
 duplicated_logger = setup_logger('dbase.DataAPI.ThetaData.duplicated')
-proxy_url = os.environ.get('PROXY_URL') if os.environ.get('PROXY_URL') else None
 
-if proxy_url is None:
+
+def get_proxy_url():
+    return os.environ.get('PROXY_URL') if os.environ.get('PROXY_URL') else None
+
+def refresh_proxy_url():
+    global proxy_url
+    proxy_url = get_proxy_url()
+
+refresh_proxy_url() ## Refreshomh proxy url
+
+if get_proxy_url() is None:
     print('No Proxy URL found. ThetaData API will default to direct access')
 else:
-    print(f'Using Proxy URL: {proxy_url}')
+    print(f'Using Proxy URL: {get_proxy_url()}')
 
 
 
@@ -81,7 +90,7 @@ def resolve_ticker_history(kwargs, _callable, _type = 'historical'):
         ## Retrieve the data for the new tick
         try:
             new_tick_data = _callable(**new_tick_kwargs) if compare_dates.is_on_or_after(pd.Timestamp(kwargs['exp']), pd.Timestamp(change_date)) else None ## Opting for expiration date instead of end date cause data cannot go beyond expiration date
-            new_tick_data = new_tick_data[new_tick_data.index.duplicated(keep = 'first')] if new_tick_data is not None else None
+            new_tick_data = new_tick_data[~new_tick_data.index.duplicated(keep = 'first')] if new_tick_data is not None else None
         except ThetaDataNotFound as e:
             logger.error(f'No data found for new_tick {new_tick} on {kwargs["exp"]}')
             logger.error(f'Error: {e}')
@@ -122,7 +131,10 @@ def request_from_proxy(thetaUrl, queryparam, instanceUrl, print_url = False):
     response = requests.request("POST", instanceUrl, headers=headers, data=payload)
     return response
 
-def greek_snapshot(symbol, proxy=proxy_url):
+def greek_snapshot(symbol, proxy=None):
+
+    if not proxy:
+        proxy = get_proxy_url()
     url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/greeks"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
@@ -133,7 +145,9 @@ def greek_snapshot(symbol, proxy=proxy_url):
     return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
 
-def ohlc_snapshot(symbol, proxy = proxy_url):
+def ohlc_snapshot(symbol, proxy = None):
+    if not proxy:
+        proxy = get_proxy_url()
     url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/ohlc"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
@@ -144,7 +158,9 @@ def ohlc_snapshot(symbol, proxy = proxy_url):
     return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
 
-def open_interest_snapshot(symbol, proxy = proxy_url):
+def open_interest_snapshot(symbol, proxy = None):
+    if not proxy:
+        proxy = get_proxy_url()
     url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/quote"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
@@ -155,7 +171,9 @@ def open_interest_snapshot(symbol, proxy = proxy_url):
     return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
 
-def quote_snapshot(symbol, proxy = proxy_url):
+def quote_snapshot(symbol, proxy = None):
+    if not proxy:
+        proxy = get_proxy_url()
     url = "http://127.0.0.1:25510/v2/snapshot/option/quote"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
@@ -170,7 +188,9 @@ def quote_snapshot(symbol, proxy = proxy_url):
                       (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
                       max_tries=5, 
                       logger=logger)
-def list_contracts(symbol, start_date, print_url = False, proxy = proxy_url, **kwargs):
+def list_contracts(symbol, start_date, print_url = False, proxy = None, **kwargs):
+    if not proxy:
+        proxy = get_proxy_url()
     pass_kwargs = {'start_date': start_date, 'symbol': symbol, 'print_url': print_url}
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0) 
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
@@ -221,11 +241,14 @@ def extract_numeric_value(timeframe_str):
                       (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
                       max_tries=5, 
                       logger=logger)
-def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], print_url=False, proxy: str = proxy_url):
+def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], print_url=False, proxy: str = None):
     """
     Interval size in miliseconds. 1 minute is 6000
     proxy the endpoint to the proxy server http://<ip>:<port>/thetadata
     """
+
+    if not proxy:
+        proxy = get_proxy_url()
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
     interval = PRICING_CONFIG['INTRADAY_AGG']
     strike_og, start_og, end_og, exp_og, start_time_og = strike, start_date, end_date, exp, start_time
@@ -309,12 +332,13 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, 
                       (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
                       max_tries=5, 
                       logger=logger)
-def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, print_url=False, rt=True, proxy = proxy_url, **kwargs):
+def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, print_url=False, rt=True, proxy = None, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
-
+    if not proxy:
+        proxy = get_proxy_url()
     ## Scheduling to update to database
     start_date_str, end_date_str = deepcopy(start_date), deepcopy(end_date)
     sm_kwargs = dict(exp=exp, right=right, strike=strike, start=start_date_str, end=end_date_str, tick=symbol, type_ = 'single', save_func = 'save_to_database')
@@ -385,18 +409,17 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
          'Bid_size', 'CloseBid', 'Ask_size', 'CloseAsk', 'Midpoint', 'Weighted_midpoint']
         data = data[columns]
         data.index.name = 'Datetime'
-        # data = data[data[['Open', 'High', 'Low', 'Close', 'Bid_size',
-        #                   'CloseBid', 'Ask_size', 'CloseAsk']].sum(axis=1) != 0]
-
 
     return data
 
 
-async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, print_url=False, rt=True, proxy = proxy_url, **kwargs):
+async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, print_url=False, rt=True, proxy = None, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
+    if not proxy:
+        proxy = get_proxy_url()
     pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 'strike': strike}
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
@@ -478,10 +501,13 @@ def retrieve_bulk_eod(
     exp,
     start_date,
     end_date,
-    proxy = proxy_url,
+    proxy = None,
     print_url = False,
     **kwargs
 ):
+
+    if not proxy:
+        proxy = get_proxy_url()
 
     pass_kwargs = {
         'symbol': symbol,
@@ -561,10 +587,12 @@ def retrieve_bulk_eod(
                       (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
                       max_tries=5, 
                       logger=logger)
-def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], print_url=False, end_time=PRICING_CONFIG['MARKET_CLOSE_TIME'], ts = False, proxy = proxy_url, **kwargs):
+def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], print_url=False, end_time=PRICING_CONFIG['MARKET_CLOSE_TIME'], ts = False, proxy = None, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
+    if not proxy:
+        proxy = get_proxy_url()
     interval = '1h'
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
     pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 
@@ -620,7 +648,6 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: s
             data['ask'])) + ((data['bid_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (data['bid']))
         data.rename(columns={x: x.capitalize()
                     for x in data.columns}, inplace=True)
-        # # print(data.columns)
         data['time'] = data['Ms_of_day'].apply(lambda c: convert_milliseconds(c))
         data['Date2'] = pd.to_datetime(data.Date.astype(
             str)).apply(lambda x: x.strftime('%Y-%m-%d'))  ## Change this to "%Y-%m-%d %H:%M:%S"
@@ -646,7 +673,7 @@ def retrieve_quote(symbol,
                    print_url=False, 
                    end_time=PRICING_CONFIG['MARKET_CLOSE_TIME'],
                    interval = '30m', 
-                   proxy = proxy_url,
+                   proxy = None,
                    **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
@@ -656,6 +683,8 @@ def retrieve_quote(symbol,
     pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 
                 'strike': strike, 'start_time': start_time, 'end_time': end_time, 'interval': interval,
                 'print_url': print_url}
+    if not proxy:
+        proxy = get_proxy_url()
     
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
@@ -704,14 +733,12 @@ def retrieve_quote(symbol,
             f'EOD OHLC mismatching dataframe size. Response: {data.columns[0]}')
         logger.error(f'No data returned at all')
         logger.info(f'Kwargs: {locals()}')
-        print('Column mismatch. Check log')
         return
     data['midpoint'] = data[['bid', 'ask']].sum(axis=1)/2
     data['weighted_midpoint'] = ((data['ask_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (
         data['ask'])) + ((data['bid_size'] / data[['bid_size', 'ask_size']].sum(axis=1)) * (data['bid']))
     data.rename(columns={x: x.capitalize()
                 for x in data.columns}, inplace=True)
-    # # print(data.columns)
     data['time'] = data['Ms_of_day'].apply(lambda c: convert_milliseconds(c))
     data['Date2'] = pd.to_datetime(data.Date.astype(
         str)).apply(lambda x: x.strftime('%Y-%m-%d'))
@@ -727,13 +754,15 @@ def retrieve_quote(symbol,
                       (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
                       max_tries=5, 
                       logger=logger)
-def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float,  print_url=False, proxy = proxy_url, **kwargs):
+def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float,  print_url=False, proxy = None, **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
     pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 
             'strike': strike, 'print_url': print_url}
+    if not proxy:
+        proxy = get_proxy_url()
     
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
@@ -784,7 +813,7 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
         data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
         data.rename(columns={x: x.capitalize()
                     for x in data.columns}, inplace=True)
-        # # # print(data.columns)
+
         data['time'] = data['Ms_of_day'].apply(convert_milliseconds)
         data['Date2'] = pd.to_datetime(data.Date.astype(
             str)).apply(lambda x: x.strftime(f'%Y-%m-%d {PRICING_CONFIG["MARKET_CLOSE_TIME"]}'))
@@ -815,10 +844,13 @@ def retrieve_bulk_open_interest(
     exp,
     start_date,
     end_date,
-    proxy = proxy_url,
+    proxy = None,
     print_url = False,
     **kwargs
 ):
+
+    if not proxy:
+        proxy = get_proxy_url()
 
     pass_kwargs = {
         'symbol': symbol,
@@ -874,7 +906,6 @@ def retrieve_bulk_open_interest(
         print(response.url) if print_url else None
         data.rename(columns={x: x.capitalize()
                     for x in data.columns}, inplace=True)
-        # # # print(data.columns)
         data['time'] = data['Ms_of_day'].apply(convert_milliseconds)
         data['Date2'] = pd.to_datetime(data.Date.astype(
             str)).apply(lambda x: x.strftime('%Y-%m-%d'))
@@ -894,11 +925,13 @@ def retrieve_bulk_open_interest(
 
 
 
-async def retrieve_openInterest_async(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float,  print_url=False, proxy = proxy_url):
+async def retrieve_openInterest_async(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float,  print_url=False, proxy = None):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
+    if not proxy:
+        proxy = get_proxy_url()
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
@@ -938,7 +971,6 @@ async def retrieve_openInterest_async(symbol, end_date: str, exp: str, right: st
     data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
     data.rename(columns={x: x.capitalize()
                 for x in data.columns}, inplace=True)
-    # # # print(data.columns)
     data['time'] = data['Ms_of_day'].apply(convert_milliseconds)
     data['Date2'] = pd.to_datetime(data.Date.astype(
         str)).apply(lambda x: x.strftime('%Y-%m-%d'))
@@ -1006,7 +1038,6 @@ def resample(data, interval, custom_agg_columns = None, method = 'ffill', **kwar
     
     ## Add EOD time if DateTimeIndex is EOD Series (Dunno why I did this, so taking it for now)
     ## If I remember, will write it here.
-    # data.index = add_eod_timestamp(data.index) 
     if isinstance(data, pd.DataFrame):
         resampled = []
 
@@ -1090,11 +1121,13 @@ def convert_time_to_miliseconds(time):
     return hour + minute + secs + mili
 
 
-def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_date:str, end_date:str, proxy = proxy_url ): 
+def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_date:str, end_date:str, proxy = None ): 
     """
         returns eod ohlc for all the days between start_date and end_date 
         Interval is default to 3600000
     """
+    if not proxy:
+        proxy = get_proxy_url()
     strike = strike * 1000
     strike = int(strike) if strike.is_integer() else strike
     url = "http://127.0.0.1:25510/v2/hist/option/ohlc"
@@ -1114,7 +1147,6 @@ def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_
             data['date'] = pd.to_datetime(data['date'], format='%Y%m%d')
             return data
         else: 
-            print('Error in retrieving data: ', data) 
             return response
     else: 
         return response
@@ -1136,7 +1168,7 @@ def retrieve_chain_bulk(symbol,
                         end_date, 
                         end_time,
                         right = None ,
-                        proxy = proxy_url,
+                        proxy = None,
                         print_url = False,
                         **kwargs) -> pd.DataFrame:
     pass_kwargs = {
@@ -1147,6 +1179,8 @@ def retrieve_chain_bulk(symbol,
         'end_time': end_time,
         'print_url': print_url
     }
+    if not proxy:
+        proxy = get_proxy_url()
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0) 
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d')) if exp else 0

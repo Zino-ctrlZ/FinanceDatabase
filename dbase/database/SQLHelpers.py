@@ -33,10 +33,6 @@ logger = setup_logger('dbase.database.SQLHelpers')
 This module is responsible for organizing all functions necessary for accessing/retrieving data from SQL Database
 """
 
-# Inside the imported module
-# logger = logging.getLogger(__name__)  # Using a module-specific logger
-# logger.error('An error occurred in the module')
-# logger.propagate = True  # Ensure it propagates to the root logger
 
 logger = setup_logger('SQLHelpers.py')  # Using a module-specific logger
 _PROCESS_ENGINE_CACHE = {}
@@ -170,7 +166,7 @@ def drop_SQL_Table_Duplicates(db, sql_table_name):
         else:
             store_SQL_data(db, sql_table_name, use_df, if_exists='append')
     # REPLACE INITIAL TABLE WITH NON DUPLICATED TABLE
-    print('Duplicates succesfully dropped', end = '\r')
+    logger.info('Duplicates succesfully dropped', end = '\r')
 
 
 def query_database(db, tbl_name, query):
@@ -209,10 +205,10 @@ def create_SQL_connection():
             user=sql_user,         # Your MySQL username
             password=sql_pw     # Your MySQL password
         )
-        print("Successfully connected to the database", end = '\r')
+        logger.info("Successfully connected to the database", end = '\r')
     except mysql.connector.Error as err:
-        print(err.errno)
-        print(err.msg)
+        logger.info(err.errno)
+        logger.info(err.msg)
 
     return connection
 
@@ -221,7 +217,7 @@ def close_SQL_connection(connection, cursor=None):
     if connection.is_connected():
         cursor.close() if cursor else None
         connection.close()
-        print("MySQL connection is closed", end = '\r')
+        logger.info("MySQL connection is closed", end = '\r')
 
 
 def create_SQL_database(connection, db_name):
@@ -233,7 +229,7 @@ def create_SQL_database(connection, db_name):
         print("Failed creating database: {}".format(err))
         exit(1)
     connection.commit()
-    print("Database created successfully", end = '\r')
+    logger.info("Database created successfully", end = '\r')
     close_SQL_connection(connection, cursor)
 
 
@@ -336,10 +332,10 @@ def create_table_from_schema(engine, table_schema):
     # Create the table in the database
     try:
         metadata.create_all(engine)
-        print(
+        logger.info(
             f"Table '{table_name}' has been created with columns: {[col.name for col in column_definitions]}", end = '\r')
     except SQLAlchemyError as e:
-        print(f"An error occurred: {e}")
+        logger.info(f"An error occurred: {e}")
 
 
 def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
@@ -347,7 +343,7 @@ def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
     Store data in a SQL table using INSERT IGNORE. If the table does not exist, it will be created.
     """
     engine =create_engine_short(db)
-    print(f"Size to be inserted: {len(data)}")
+    logger.info(f"Size to be inserted: {len(data)}")
     with engine.begin() as connection:
         connection.execute(text(f"""
             CREATE TEMPORARY TABLE temp LIKE {sql_table_name};
@@ -358,7 +354,7 @@ def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
                         index=False, chunksize=1000)
             print("Data inserted into temporary table.", end = '\r')
         except Exception as e:
-            print(f"Error during insertion into temp: {e}")
+            logger.info(f"Error during insertion into temp: {e}")
 
         try:
             result = connection.execute(text(f"""
@@ -367,7 +363,7 @@ def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
             """))
             print(f"Rows inserted into {sql_table_name}: {result.rowcount}", end = '\r')
         except Exception as e:
-            print(f"Error during INSERT IGNORE: {e}")
+            logger.info(f"Error during INSERT IGNORE: {e}")
 
         connection.execute(text("DROP TABLE temp;"))
 
@@ -424,7 +420,7 @@ def execute_query(db, table_name, query, params=None):
     # Execute the query
     with engine.begin() as conn:
         conn.execute(query, params or {})
-        print("Query executed successfully.", end = '\r')
+        logger.info("Query executed successfully.", end = '\r')
 
 
 
@@ -450,12 +446,12 @@ class DatabaseAdapter:
         na_rows = data.isna().any(axis=1).sum()
         na_cols = data.isna().any(axis = 0)
         
-        print("Columns with NaN") if na_rows else None
-        print(na_cols[na_cols==True]) if na_rows else None
-        print(f"Rows with at least one NA: {na_rows}") if na_rows else None
+        logger.info("Columns with NaN") if na_rows else None
+        logger.info(na_cols[na_cols==True]) if na_rows else None
+        logger.info(f"Rows with at least one NA: {na_rows}") if na_rows else None
 
         dup_rows = data.duplicated().sum()
-        print(f"Fully duplicated rows: {dup_rows}") if dup_rows else None
+        logger.info(f"Fully duplicated rows: {dup_rows}") if dup_rows else None
 
 
 
