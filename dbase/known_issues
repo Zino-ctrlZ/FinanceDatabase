@@ -1,0 +1,6 @@
+ThetaData Known issues:
+
+- Split Dates: 
+    - When a ticker splits, eg 10 for 1. Assume a strike pre split is 850, post is then 85
+
+    - In this scenario, is 85 ALREADY existed pre split, the data for pre split and post split will flow when accesisng this end point from ThetaData btwn start before split and end after split
