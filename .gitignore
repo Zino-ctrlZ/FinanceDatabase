@@ -1,4 +1,5 @@
 \finenv
+\findbenv
 \.env
 .DS_Strore
 *.pyc
