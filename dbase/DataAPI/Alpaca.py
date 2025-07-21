@@ -1,10 +1,50 @@
-from trade.helpers.Logging import setup_logger
 from alpaca.trading.client import TradingClient
+from alpaca.trading.enums import OrderSide, PositionIntent
+from alpaca.trading.requests import OptionLegRequest
 import os
 import requests
+import logging
+from datetime import datetime
 
+# Set up logging - fallback if trade package is not available
+try:
+    from trade.helpers.Logging import setup_logger
+    logger = setup_logger('dbase.DataApi.Alpaca')
+except ImportError:
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger('dbase.DataApi.Alpaca')
+    
 trading_client = TradingClient(os.environ.get('ALPACA_PAPER_KEY'), os.environ.get('ALPACA_PAPER_SECRET'))
-logger = setup_logger('dbase.DataApi.Alpaca')
+
+
+
+def generate_option_symbol(root_symbol: str, expiration_date: str, option_type: str, strike_price: float) -> str:
+    """
+    Generate Alpaca option symbol format.
+    
+    Args:
+        root_symbol: Stock symbol (e.g., 'AAPL')
+        expiration_date: Date in 'YYYY-MM-DD' format
+        option_type: 'call' or 'put' (or 'C'/'P')
+        strike_price: Strike price as float
+    
+    Returns:
+        Option symbol in Alpaca format
+    """
+    
+    # Parse expiration date
+    date_obj = datetime.strptime(expiration_date, '%Y-%m-%d')
+    date_str = date_obj.strftime('%y%m%d')  # YYMMDD format
+    
+    # Convert option type to single letter
+    option_letter = option_type.upper()[0]  # 'call' -> 'C', 'put' -> 'P'
+    
+    # Format strike price (remove decimal, pad to 8 digits)
+    # Multiply by 1000 to get the correct format (e.g., 120.0 -> 120000)
+    strike_str = f"{int(strike_price * 1000):08d}"
+    
+    return f"{root_symbol}{date_str}{option_letter}{strike_str}"
+
 
 def collect_params(args_dict, exclude: list[str] = []):
     """
@@ -26,7 +66,8 @@ def collect_params(args_dict, exclude: list[str] = []):
         if k not in exclude and v is not None:
             if isinstance(v, list):
                 params[k] = ','.join(v)
-            params[k] = v
+            else:
+                params[k] = v
     return params
 
 def get_headers(): 
@@ -42,19 +83,73 @@ def get_trading_client(paper: bool = True):
 def get_base_url(paper: bool = True): 
     return 'https://paper-api.alpaca.markets/v2' if paper else 'https://api.alpaca.markets/v2'
 
-def add_query_param(url: str, param: str, value: str):
-    if '?' in url: 
-        return f'{url}&{param}={value}'
-    else: 
-        return f'{url}?{param}={value}'
+def add_query_param(url: str, param: str, value: str) -> str:
+    """Add a single query parameter to a URL."""
+    separator = '&' if '?' in url else '?'
+    return f"{url}{separator}{param}={value}"
 
-def add_query_params(url: str, params: dict):
+def add_query_params(url: str, params: dict) -> str:
+    """Add multiple query parameters to a URL."""
     for param, value in params.items():
         url = add_query_param(url, param, value)
     return url
 
 def get_account(trading_client: TradingClient): 
     return trading_client.get_account()
+
+def create_buy_option_leg_request(symbol: str, ratio_qty: float = 1.0, side: OrderSide = OrderSide.BUY, position_intent: PositionIntent | None = None) -> OptionLegRequest:
+    """
+    Create a buy option leg request for multi-leg orders.
+    
+    Args:
+        symbol (str): The option contract symbol (e.g., 'AAPL250718C00090000')
+        ratio_qty (float): The proportional quantity of this leg in relation to the overall multi-leg order quantity
+        side (OrderSide): The side of the order (BUY or SELL), defaults to BUY
+        position_intent (PositionIntent): The position strategy for this leg (optional)
+    
+    Returns:
+        OptionLegRequest: A configured option leg request for buying options
+        
+    Example:
+        # Create a simple buy call option leg
+        leg = create_buy_option_leg_request('AAPL250718C00090000')
+        
+        # Create a buy put option leg with custom ratio
+        leg = create_buy_option_leg_request('AAPL250718P00085000', ratio_qty=2.0)
+    """
+    return OptionLegRequest(
+        symbol=symbol,
+        ratio_qty=ratio_qty,
+        side=side,
+        position_intent=position_intent
+    )
+
+def create_sell_option_leg_request(symbol: str, ratio_qty: float = 1.0, side: OrderSide = OrderSide.SELL, position_intent: PositionIntent | None = None) -> OptionLegRequest:
+    """
+    Create a sell option leg request for multi-leg orders.
+    
+    Args:
+        symbol (str): The option contract symbol (e.g., 'AAPL250718C00090000')
+        ratio_qty (float): The proportional quantity of this leg in relation to the overall multi-leg order quantity
+        side (OrderSide): The side of the order (BUY or SELL), defaults to SELL
+        position_intent (PositionIntent): The position strategy for this leg (optional)
+    
+    Returns:
+        OptionLegRequest: A configured option leg request for selling options
+        
+    Example:
+        # Create a simple sell call option leg
+        leg = create_sell_option_leg_request('AAPL250718C00090000')
+        
+        # Create a sell put option leg with custom ratio
+        leg = create_sell_option_leg_request('AAPL250718P00085000', ratio_qty=1.0)
+    """
+    return OptionLegRequest(
+        symbol=symbol,
+        ratio_qty=ratio_qty,
+        side=side,
+        position_intent=position_intent
+    )
 
 
 
@@ -237,15 +332,19 @@ def create_order(symbol: str, **kwargs):
     - symbol: str
     - qty: int
     - side: str
-    - type: str
-    - time_in_force: str
-    - limit_price: float
-    - stop_price: float
+    - type: str 'market' | 'limit' | 'stop' | 'stop_limit' | 'trailing_stop'
+    - time_in_force: str 'gtc' | 'ioc' | 'fok' | 'day' | 'opg'
+    - limit_price: string
+    - stop_price: dict
+    - take_profit: dict
+    - legs: list[dict]
     - client_order_id: str
+    - trail_percent: float
+    - trail_price: string
 
     returns : dict | None
     """
-    payload = collect_params({**kwargs, 'symbol': symbol}, exclude=['qty', 'side', 'type', 'time_in_force', 'limit_price', 'stop_price', 'client_order_id'])
+    payload = collect_params({**kwargs, 'symbol': symbol})
     url = get_base_url() + '/orders'
     response = requests.post(url, headers=get_headers(), json=payload)
     if response.status_code != 200:
