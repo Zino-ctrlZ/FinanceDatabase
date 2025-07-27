@@ -34,6 +34,7 @@ This Module is responsible for organizing all functions related to accessing dat
 
 _SHOULD_SCHEDULE = True
 proxy_url = None ## Initial initiation
+BASE_URL = "http://localhost:25503/v3"
 
 def set_should_schedule(should_schedule):
     print(f'Setting should_schedule to {should_schedule}')
@@ -46,6 +47,14 @@ def get_should_schedule():
 def schedule_kwargs(kwargs):
     from module_test.raw_code.DataManagers.SaveManager import SaveManager
     SaveManager.schedule(kwargs=kwargs)
+
+def convert_list_to_string(lst):
+    """
+    Converts a list to a string with comma separated values.
+    """
+    if isinstance(lst, list):
+        return ','.join(map(str, lst))
+    return str(lst)
 
 logger = setup_logger('dbase.DataAPI.ThetaData')
 duplicated_logger = setup_logger('dbase.DataAPI.ThetaData.duplicated')
@@ -135,7 +144,7 @@ def greek_snapshot(symbol, proxy=None):
 
     if not proxy:
         proxy = get_proxy_url()
-    url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/greeks"
+    url = f"{BASE_URL}bulk_snapshot/option/greeks"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
     if proxy:
@@ -148,7 +157,7 @@ def greek_snapshot(symbol, proxy=None):
 def ohlc_snapshot(symbol, proxy = None):
     if not proxy:
         proxy = get_proxy_url()
-    url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/ohlc"
+    url = f"{BASE_URL}/bulk_snapshot/option/ohlc"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
     if proxy:
@@ -161,7 +170,7 @@ def ohlc_snapshot(symbol, proxy = None):
 def open_interest_snapshot(symbol, proxy = None):
     if not proxy:
         proxy = get_proxy_url()
-    url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/quote"
+    url = f"{BASE_URL}/bulk_snapshot/option/quote"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
     if proxy:
@@ -174,7 +183,7 @@ def open_interest_snapshot(symbol, proxy = None):
 def quote_snapshot(symbol, proxy = None):
     if not proxy:
         proxy = get_proxy_url()
-    url = "http://127.0.0.1:25510/v2/snapshot/option/quote"
+    url = f"{BASE_URL}/snapshot/option/quote"
     querystring = {"root": symbol, "exp": "0", "use_csv": "true"}
     headers = {"Accept": "application/json"}
     if proxy:
@@ -184,18 +193,18 @@ def quote_snapshot(symbol, proxy = None):
     return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()['data']))
 
 
-@backoff.on_exception(backoff.expo, 
-                      (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
-                      max_tries=5, 
-                      logger=logger)
+# @backoff.on_exception(backoff.expo, 
+#                       (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
+#                       max_tries=5, 
+#                       logger=logger)
 def list_contracts(symbol, start_date, print_url = False, proxy = None, **kwargs):
     if not proxy:
         proxy = get_proxy_url()
     pass_kwargs = {'start_date': start_date, 'symbol': symbol, 'print_url': print_url}
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0) 
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
-    url = "http://127.0.0.1:25510/v2/list/contracts/option/quote"
-    querystring = {"start_date": start_date ,"root": symbol,  "use_csv": "true"}
+    url = f"{BASE_URL}/option/list/contracts/quote"
+    querystring = {"date": start_date ,"symbol": convert_list_to_string(symbol),  "format": "csv"}
     headers = {"Accept": "application/json"}
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs['depth'] += 1
@@ -207,7 +216,7 @@ def list_contracts(symbol, start_date, print_url = False, proxy = None, **kwargs
         print(response_url) if print_url else None
         raise_thetadata_exception(response, querystring, proxy)
     else:
-        response = requests.get(url, headers=headers, params=querystring)
+        response = requests.get(url, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
         print(response.url) if print_url else None
 
@@ -237,10 +246,10 @@ def extract_numeric_value(timeframe_str):
     strings = [str(letter) for _, letter in match][0]
     return strings, integers
 
-@backoff.on_exception(backoff.expo, 
-                      (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
-                      max_tries=5, 
-                      logger=logger)
+# @backoff.on_exception(backoff.expo, 
+#                       (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
+#                       max_tries=5, 
+#                       logger=logger)
 def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], print_url=False, proxy: str = None):
     """
     Interval size in miliseconds. 1 minute is 6000
@@ -259,7 +268,7 @@ def retrieve_ohlc(symbol, end_date: str, exp: str, right: str, start_date: str, 
     strike *= 1000
     strike = int(strike)
     start_time = str(convert_time_to_miliseconds(start_time))
-    url = "http://127.0.0.1:25510/v2/hist/option/ohlc"
+    url = f"{BASE_URL}/hist/option/ohlc"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl,
                    "right": right, "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False}
     headers = {"Accept": "application/json"}
@@ -355,7 +364,7 @@ def retrieve_eod_ohlc(symbol, end_date: str, exp: str, right: str, start_date: s
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     strike *= 1000
     strike = int(strike)
-    url = "http://127.0.0.1:25510/v2/hist/option/eod"
+    url = f"{BASE_URL}/hist/option/eod"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true",
                    "exp": exp, "right": right, "start_date": start_date, "strike": strike}
     headers = {"Accept": "application/json"}
@@ -430,7 +439,7 @@ async def retrieve_eod_ohlc_async(symbol, end_date: str, exp: str, right: str, s
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     strike *= 1000
     strike = int(strike)
-    url = "http://127.0.0.1:25510/v2/hist/option/eod"
+    url = f"{BASE_URL}/hist/option/eod"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true",
                    "exp": exp, "right": right, "start_date": start_date, "strike": strike}
     headers = {"Accept": "application/json"}
@@ -612,7 +621,7 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: s
     strike = int(strike)
     start_time = str(convert_time_to_miliseconds(start_time))
     end_time = str(convert_time_to_miliseconds(end_time))
-    url = "http://127.0.0.1:25510/v2/snapshot/option/quote" if not ts else "http://127.0.0.1:25510/v2/hist/option/quote"
+    url = f"{BASE_URL}/snapshot/option/quote" if not ts else f"{BASE_URL}/hist/option/quote"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl, "right": right,
                    "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False, 'end_time': end_time}
     headers = {"Accept": "application/json"}
@@ -699,7 +708,7 @@ def retrieve_quote(symbol,
     strike = int(strike)
     start_time = str(convert_time_to_miliseconds(start_time))
     end_time = str(convert_time_to_miliseconds(end_time))
-    url = "http://127.0.0.1:25510/v2/hist/option/quote"
+    url = f"{BASE_URL}/hist/option/quote"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl, "right": right,
                    "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False, 'end_time': end_time}
     headers = {"Accept": "application/json"}
@@ -774,7 +783,7 @@ def retrieve_openInterest(symbol, end_date: str, exp: str, right: str, start_dat
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     strike *= 1000
     strike = int(strike)
-    url = "http://127.0.0.1:25510/v2/hist/option/open_interest"
+    url = f"{BASE_URL}/hist/option/open_interest"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp,"right": right,
                    "start_date": start_date, "strike": strike,'rth': False}
     headers = {"Accept": "application/json"}
@@ -937,7 +946,7 @@ async def retrieve_openInterest_async(symbol, end_date: str, exp: str, right: st
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     strike *= 1000
     strike = int(strike)
-    url = "http://127.0.0.1:25510/v2/hist/option/open_interest"
+    url = f"{BASE_URL}/hist/option/open_interest"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp,"right": right,
                    "start_date": start_date, "strike": strike,'rth': False}
     headers = {"Accept": "application/json"}
@@ -1130,7 +1139,7 @@ def retrieve_option_ohlc(symbol: str, exp:str, strike : float, right:str, start_
         proxy = get_proxy_url()
     strike = strike * 1000
     strike = int(strike) if strike.is_integer() else strike
-    url = "http://127.0.0.1:25510/v2/hist/option/ohlc"
+    url = f"{BASE_URL}/hist/option/ohlc"
     querystring = {"end_date": end_date, "root": symbol, "use_csv": "true", "exp": exp, "ivl": 3600000, "right": right, "start_date": start_date, "strike": strike}
     headers = {"Accept": "application/json"}
     if proxy:
