@@ -326,7 +326,7 @@ def get_orders(status: str, **kwargs):
 
 def create_order(symbol: str, **kwargs): 
     """
-    Create order
+    Create order for a single asset 
     ref: https://docs.alpaca.markets/reference/postorder
     params: 
     - symbol: str
@@ -371,3 +371,40 @@ def delete_order(order_id: str):
         raise Exception(f'Error deleting order: {response.status_code} {response.text}')
     return response.json()
 
+def create_multi_leg_limit_order( long_leg: dict, short_leg: dict, qty: int, limit_price: float, **kwargs): 
+    """
+    Create multi-leg limit order
+    ref: https://docs.alpaca.markets/docs/options-level-3-trading
+    params: 
+    - long_leg: dict {
+        'symbol': str,
+        'ratio_qty': float,
+        'side': str, # 'buy' | 'sell'
+        'position_intent': str, # 'buy_to_open' | 'buy_to_close'
+    }
+     - short_leg: dict {
+        'symbol': str,
+        'ratio_qty': float,
+        'side': str, # 'buy' | 'sell'
+        'position_intent': str, #'sell_to_open' | 'sell_to_close'
+    }
+    - qty: int
+    - limit_price: float
+    - time_in_force: str 'gtc' | 'ioc' | 'fok' | 'day' | 'opg'
+    - trail_percent: float
+    - trail_price: string
+    returns : dict | None
+    """
+   
+    
+    params = collect_params({**kwargs, 'qty': qty, 'limit_price': limit_price, "order_class": "mleg", "type": "limit", "time_in_force": "day"})
+    payload = {**params, 'legs': [long_leg, short_leg]}
+
+    print(payload)
+    url = get_base_url() + '/orders'
+    response = requests.post(url, headers=get_headers(), json=payload)
+    if response.status_code != 200:
+        logger.error(f'Error creating multi-leg limit order: {response.status_code} {response.text}')
+        print(f'Error: {response.text} {response.status_code}')
+        raise Exception(f'Error creating multi-leg limit order: {response.status_code} {response.text}')
+    return response.json()
