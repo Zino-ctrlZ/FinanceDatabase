@@ -1,3 +1,4 @@
+import http
 import sys
 import os
 from dotenv import load_dotenv
@@ -1253,3 +1254,21 @@ def retrieve_chain_bulk(symbol,
             'CloseAsk', 'Date', 'Midpoint', 'Weighted_midpoint']
         data = data[columns]
     return data
+
+
+
+def ping_proxy():
+    headers = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        "method": "GET",
+        "url": 'http://127.0.0.1:25510/v2/hist/option/eod?end_date=20250619&root=AAPL&use_csv=true&exp=20241220&right=C&start_date=20240101&strike=220000'
+    }
+    proxy_url = os.environ['PROXY_URL']
+    response = requests.post(proxy_url, headers=headers, json=payload)
+    try: 
+        return response.status_code == 200
+    except Exception as e: 
+        return False

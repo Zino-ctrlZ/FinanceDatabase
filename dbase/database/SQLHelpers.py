@@ -424,6 +424,27 @@ def execute_query(db, table_name, query, params=None):
 
 
 
+
+
+def ping_mysql() -> bool:
+    try:
+        connection = mysql.connector.connect(
+            user=sql_user,
+            password=sql_pw,
+            host=sql_host,
+            port=sql_port,
+            connection_timeout=5
+        )
+        if connection.is_connected():
+            print("✅ MySQL connection successful.")
+            return True
+    except Error as e:
+        print(f"❌ MySQL connecton failed: {e}")
+        return False
+    finally:
+        if 'connection' in locals() and connection.is_connected():
+            connection.close()
+
 class DatabaseAdapter:
 
     def __init__(self):

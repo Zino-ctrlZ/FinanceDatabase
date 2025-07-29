@@ -1,0 +1,129 @@
+# Alpaca Integration - Product Requirements Document (PRD)
+
+## 1. Overview
+This document outlines the requirements and design for a Python API module to interact with the Alpaca brokerage, supporting both equities and options trading, with robust error handling, logging, and extensibility. All Alpaca-related functions and classes will be implemented in a single module (`Alpaca.py`), following a similar organizational and functional style as `ThetaData.py`.
+
+---
+
+## 2. Design Philosophy
+- **Single-module approach:**
+  - All core logic, helpers, and classes will reside in `Alpaca.py`.
+  - Structure and function organization will mirror the style and practices of `ThetaData.py` for consistency and maintainability.
+- **Hybrid functional/OOP:**
+  - Use classes for stateful API/session management where needed.
+  - Use functions for stateless helpers/utilities and main API endpoints.
+- **Extensible:**
+  - Easy to add new asset classes, order types, and endpoints within the single module.
+
+---
+
+## 3. Module Structure
+```
+dbase/
+  DataAPI/
+    Alpaca.py         # All Alpaca integration logic, classes, helpers, and API wrappers
+```
+
+---
+
+## 4. Configuration
+- **API keys:**
+  - Paper: `ALPACA_PAPER_KEY`, `ALPACA_PAPER_SECRET`
+  - Live: `ALPACA_LIVE_KEY`, `ALPACA_LIVE_SECRET`
+- **Selection:**
+  - `paper` flag in functions/classes determines which keys to use.
+  - Fail fast if required keys are missing.
+- **Logging level:**
+  - Set via `STREAM_LOG_LEVEL` environment variable.
+
+---
+
+## 5. Logging
+- Use `trade.helpers.Logging.setup_logger` for all logging.
+- Example:
+  ```python
+  from trade.helpers.Logging import setup_logger
+  logger = setup_logger('dbase.DataAPI.Alpaca')
+  ```
+- Log level is configurable via `STREAM_LOG_LEVEL`.
+
+---
+
+## 6. Rate Limiting & Retries
+- Use the `backoff` package for automatic retries on network errors and rate limits.
+- Rate limiting is handled internally; not exposed to the user.
+
+---
+
+## 7. Order Types Supported (Initial)
+- Market Order
+- Limit Order
+- Stop Order
+- Stop-Limit Order
+- Trailing Stop Order
+- Market-on-Close Order
+- Stop Loss Order (as stop/stop-limit)
+
+---
+
+## 8. Data Coverage
+- **Equities:** Full support (quotes, bars, trades, snapshots, etc.)
+- **Options:**
+  - Support for options chains, quotes, and basic order placement (expand as Alpaca’s API matures)
+
+---
+
+## 9. Error Handling
+- **Lazy load** where possible (e.g., API keys, optional features)
+- **Fail fast** on critical errors (e.g., missing config, invalid parameters)
+- Custom exceptions for config errors, API errors, unsupported operations
+
+---
+
+## 10. Testing
+- Use simple `.py` test modules (no test framework dependency for now)
+- Mock Alpaca SDK and REST responses
+- Usage examples included in tests
+
+---
+
+## 11. Documentation
+- All public methods/classes have clear docstrings and usage examples
+- Top-level README for the Alpaca module recommended
+
+---
+
+## 12. Alpaca SDK & REST
+- Use Alpaca Python SDK where possible
+- Use direct REST calls for unsupported endpoints
+- Wrap SDK/REST in a consistent interface for easier testing and extension
+
+---
+
+## 13. Extensibility
+- Design allows for easy addition of new asset classes (e.g., crypto, futures) and order types within the single module
+- Modular code sections for future separation if needed
+
+---
+
+## 14. Open/Deferred Items
+- Expand options support as Alpaca’s API matures
+- Consider advanced order types and asset classes in future iterations
+
+---
+
+## 15. Example Usage
+```python
+from dbase.DataAPI.Alpaca import get_account, place_order, get_option_chain
+
+account = get_account(paper=True)
+order = place_order(symbol="AAPL", qty=1, side="buy", type="market", paper=True)
+chain = get_option_chain('AAPL', paper=True)
+```
+
+---
+
+## 16. Out of Scope
+- CLI tools
+- Websocket/streaming support (for now)
+- Dependency management 
