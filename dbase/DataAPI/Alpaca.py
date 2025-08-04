@@ -46,6 +46,42 @@ def generate_option_symbol(root_symbol: str, expiration_date: str, option_type: 
     return f"{root_symbol}{date_str}{option_letter}{strike_str}"
 
 
+
+def parse_option_symbol(option_symbol: str) -> dict:
+    """
+    Parse Alpaca option symbol format into its components.
+    
+    Args:
+        option_symbol: Option symbol in Alpaca format (e.g., 'AAPL250724C01200000')
+    
+    Returns:
+        A dictionary with root_symbol, expiration_date, option_type, and strike_price.
+    """
+    
+    # Extract root symbol (letters before the date)
+    root_symbol = ''.join(filter(str.isalpha, option_symbol[:-15]))
+    
+    # Extract expiration date (YYMMDD format)
+    date_str = option_symbol[len(root_symbol):len(root_symbol) + 6]
+    expiration_date = datetime.strptime(date_str, '%y%m%d').strftime('%Y-%m-%d')
+    
+    # Extract option type ('C' or 'P')
+    option_type = option_symbol[len(root_symbol) + 6]
+    option_type = 'C' if option_type == 'C' else 'P'
+    
+    # Extract strike price (last 8 digits, divide by 1000 to get float)
+    strike_str = option_symbol[-8:]
+    strike_price = int(strike_str) / 1000.0
+    
+    return {
+        'symbol': root_symbol,
+        'expiration_date': expiration_date,
+        'right': option_type,
+        'strike': strike_price
+    }
+
+
+
 def collect_params(args_dict, exclude: list[str] = []):
     """
     Collect all arguments except 'symbol' from a function's arguments dict, and add them to a params dict if their value is not None.
