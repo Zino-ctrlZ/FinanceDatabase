@@ -223,6 +223,24 @@ def list_contracts(symbol, start_date, print_url = False, proxy = None, **kwargs
 
 
 def identify_length(string, integer, rt=False):
+    """
+    
+    Identify the length of the timeframe in minutes based on the string and integer provided.
+    Parameters
+    
+    ----------
+    string : str
+        The string representing the timeframe (e.g., 'm', 'h', 'd', 'w', 'm', 'y', 'q').
+    integer : int
+    The integer representing the number of units for the timeframe.
+    rt : bool, optional
+        If True, the function will use real-time values for timeframes. Default is False.
+    Returns
+    -------
+    int
+        The length of the timeframe in minutes.
+    
+    """
     if rt:
         TIMEFRAMES_VALUES = {'m': 1, 'h': 60, 'd': 60*24, 'w': 60*24*7}
     else:
@@ -659,6 +677,32 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: s
 
     return data
 
+def bootstrap_ohlc(data:pd.DataFrame, 
+                copy_column:str='Midpoint'):
+    
+    """
+    Format the OHLC data to have a consistent structure.
+    Parameters
+    ----------
+    data : pd.DataFrame
+        The OHLC data to format.
+    copy_column : str, optional
+        The column to copy values from, by default 'Midpoint'.
+
+    Returns
+    -------
+    pd.DataFrame
+        The formatted OHLC data.
+    """
+    
+    new_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+    copy_column = 'Midpoint'
+    for col in new_cols:
+        if col not in data.columns:
+            data[col.capitalize()] = data[copy_column]
+
+    return data
+
 
 @backoff.on_exception(backoff.expo, 
                       (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
@@ -670,17 +714,26 @@ def retrieve_quote(symbol,
                    right: str, 
                    start_date: str, 
                    strike: float, 
-                   start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], 
+                   start_time: str = None, 
                    print_url=False, 
                    end_time=PRICING_CONFIG['MARKET_CLOSE_TIME'],
                    interval = '30m', 
                    proxy = None,
+                   ohlc_format=True,
                    **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
     """
     
+
     assert isinstance(strike, float), f'strike should be type float, recieved {type(strike)}'
+    
+    ##FIXME: ONE Time fix. We use 9:45 for start_time when bootstrapping ohlc to ensure there is data for open
+    if start_time is None:
+        if ohlc_format:
+            start_time = PRICING_CONFIG['QUOTE_DATA_START_TIME']
+        else:
+            start_time = PRICING_CONFIG['MARKET_OPEN_TIME']
     pass_kwargs = {'symbol': symbol, 'end_date': end_date, 'exp': exp, 'right': right, 'start_date': start_date, 
                 'strike': strike, 'start_time': start_time, 'end_time': end_time, 'interval': interval,
                 'print_url': print_url}
@@ -694,15 +747,17 @@ def retrieve_quote(symbol,
         return resolve_ticker_history(pass_kwargs, retrieve_quote, _type = 'historical')
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
-    ivl = identify_length(*extract_numeric_value(interval), rt=True)*60000
+    ivl = identify_length(*extract_numeric_value(PRICING_CONFIG.get("MIN_BAR_TIME_INTERVAL", "5m"))
+                          , rt=True) * 60_000
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     strike = round(strike * 1000, 0)
     strike = int(strike)
+    #  if not ohlc_format else PRICING_CONFIG['QUOTE_DATA_START_TIME']
     start_time = str(convert_time_to_miliseconds(start_time))
     end_time = str(convert_time_to_miliseconds(end_time))
     url = "http://127.0.0.1:25510/v2/hist/option/quote"
     querystring = {"end_date": end_date, "root": symbol,  "use_csv": "true", "exp": exp, "ivl": ivl, "right": right,
-                   "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': False, 'end_time': end_time}
+                   "start_date": start_date, "strike": strike, "start_time": start_time, 'rth': True, 'end_time': end_time}
     headers = {"Accept": "application/json"}
     
 
@@ -747,8 +802,15 @@ def retrieve_quote(symbol,
     data['datetime'] = pd.to_datetime(data.Date3)
     data.set_index('datetime', inplace=True)
     data.drop(columns=['Date2', 'Date3', 'Ms_of_day'], inplace=True)
+    data.rename(columns={
+        'Bid': 'Closebid',
+        'Ask': 'Closeask',
+    }, inplace= True)
 
-    return data
+    if ohlc_format:
+        data = bootstrap_ohlc(data, copy_column='Midpoint')
+
+    return resample(data, interval=interval)
 
 
 @backoff.on_exception(backoff.expo, 
@@ -1000,6 +1062,12 @@ def resample(data, interval, custom_agg_columns = None, method = 'ffill', **kwar
     custom_agg_columns : dict, optional
         Custom aggregation dictionary to use for resampling. The default is None, which uses the default aggregation functions.
         The dictionary should have the format {'column_name': 'agg_func'} where 'agg_func' is a string representing the aggregation function to use.
+    
+    method : str, optional
+        Method to use for resampling. Default is 'ffill'. Other options include 'mean', 'sum', 'max', 'min', etc.
+        If a column is not passed in the `custom_agg_columns`, it will use the method provided if not in default custom columns
+
+    kwargs : dict, optional
 
     Returns
     -------
