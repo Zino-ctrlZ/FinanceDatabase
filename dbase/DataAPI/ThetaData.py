@@ -16,6 +16,7 @@ import pandas as pd
 import os
 import json
 from datetime import time as dtTime
+from datetime import datetime
 import numpy as np
 from dbase.utils import add_eod_timestamp, enforce_bus_hours, PRICING_CONFIG
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS, verify_ticker, swap_ticker
@@ -606,9 +607,20 @@ def retrieve_bulk_eod(
                       (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart), 
                       max_tries=5, 
                       logger=logger)
-def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: str, strike: float, start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], print_url=False, end_time=PRICING_CONFIG['MARKET_CLOSE_TIME'], ts = False, proxy = None, **kwargs):
+def retrieve_quote_rt(symbol, 
+                      exp: str, 
+                      right: str, 
+                      strike: float, 
+                      start_time: str = PRICING_CONFIG['MARKET_OPEN_TIME'], 
+                      print_url=False, end_time=PRICING_CONFIG['MARKET_CLOSE_TIME'], 
+                      ts = False, 
+                      proxy = None,
+                      start_date: str = None,  
+                      end_date: str = None, 
+                      **kwargs):
     """
     Interval size in miliseconds. 1 minute is 6000
+    Returns realtime data
     """
     if not proxy:
         proxy = get_proxy_url()
@@ -623,10 +635,10 @@ def retrieve_quote_rt(symbol, end_date: str, exp: str, right: str, start_date: s
         pass_kwargs['depth'] += 1
 
         return resolve_ticker_history(pass_kwargs, retrieve_quote_rt, _type = 'historical')
-    end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
+    end_date = int(datetime.now().strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
     ivl = identify_length(*extract_numeric_value(interval), rt=True)*60000
-    start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
+    start_date = int(datetime.now().strftime('%Y%m%d'))
     strike *= 1000
     strike = int(strike)
     start_time = str(convert_time_to_miliseconds(start_time))
