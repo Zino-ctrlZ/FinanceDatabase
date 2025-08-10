@@ -338,7 +338,7 @@ def create_table_from_schema(engine, table_schema):
         logger.info(f"An error occurred: {e}")
 
 
-def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
+def store_SQL_data_Insert_Ignore(db, sql_table_name, data, _raise=False):
     """
     Store data in a SQL table using INSERT IGNORE. If the table does not exist, it will be created.
     """
@@ -348,13 +348,14 @@ def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
         connection.execute(text(f"""
             CREATE TEMPORARY TABLE temp LIKE {sql_table_name};
         """))
-
         try:
             data.to_sql('temp', con=connection, if_exists='append',
                         index=False, chunksize=1000)
             print("Data inserted into temporary table.", end = '\r')
         except Exception as e:
-            logger.info(f"Error during insertion into temp: {e}")
+            logger.error(f"Error during insertion into temp: {e}")
+            if _raise:
+                raise e
 
         try:
             result = connection.execute(text(f"""
@@ -363,7 +364,9 @@ def store_SQL_data_Insert_Ignore(db, sql_table_name, data):
             """))
             print(f"Rows inserted into {sql_table_name}: {result.rowcount}", end = '\r')
         except Exception as e:
-            logger.info(f"Error during INSERT IGNORE: {e}")
+            logger.error(f"Error during INSERT IGNORE: {e}")
+            if _raise:
+                raise e
 
         connection.execute(text("DROP TABLE temp;"))
 
@@ -450,9 +453,9 @@ class DatabaseAdapter:
     def __init__(self):
         pass
 
-    def save_to_database(self, data, db, table_name):
-        data = self.__filter_data(data)
-        store_SQL_data_Insert_Ignore(db, table_name, data)
+    def save_to_database(self, data, db, table_name, filter_data=True, _raise = False):
+        data = self.__filter_data(data) if filter_data else data
+        store_SQL_data_Insert_Ignore(db, table_name, data, _raise=_raise)
 
     def query_database(self, db, table_name, query):
         data = query_database(db, table_name, query)
@@ -469,7 +472,7 @@ class DatabaseAdapter:
         
         logger.info("Columns with NaN") if na_rows else None
         logger.info(na_cols[na_cols==True]) if na_rows else None
-        logger.info(f"Rows with at least one NA: {na_rows}") if na_rows else None
+        logger.error(f"Rows with at least one NA: {na_rows}") if na_rows else None
 
         dup_rows = data.duplicated().sum()
         logger.info(f"Fully duplicated rows: {dup_rows}") if dup_rows else None
