@@ -316,7 +316,7 @@ def get_orders(status: str, **kwargs):
     url = get_base_url() + '/orders'
     url = add_query_params(url, params)
     response = requests.get(url, headers=get_headers())
-    if response.status_code != 200:
+    if response.status_code != 204:
         logger.error(f'Error getting orders: {response.status_code} {response.text}')
         print(f'Error: {response.text} {response.status_code}')
         raise Exception(f'Error getting orders: {response.status_code} {response.text}')
@@ -368,24 +368,18 @@ def delete_order(order_id: str):
         logger.error(f'Error deleting order: {response.status_code} {response.text}')
         print(f'Error: {response.text} {response.status_code}')
         raise Exception(f'Error deleting order: {response.status_code} {response.text}')
-    return response.json()
+    return response.text
 
-def create_multi_leg_limit_order( long_leg: dict, short_leg: dict, qty: int, limit_price: float, **kwargs): 
+def create_multi_leg_limit_order( legs: list[dict], qty: int, limit_price: float, **kwargs): 
     """
     Create multi-leg limit order
     ref: https://docs.alpaca.markets/docs/options-level-3-trading
     params: 
-    - long_leg: dict {
+    - legs: list[dict] {
         'symbol': str,
         'ratio_qty': float,
         'side': str, # 'buy' | 'sell'
         'position_intent': str, # 'buy_to_open' | 'buy_to_close'
-    }
-     - short_leg: dict {
-        'symbol': str,
-        'ratio_qty': float,
-        'side': str, # 'buy' | 'sell'
-        'position_intent': str, #'sell_to_open' | 'sell_to_close'
     }
     - qty: int
     - limit_price: float
@@ -397,7 +391,7 @@ def create_multi_leg_limit_order( long_leg: dict, short_leg: dict, qty: int, lim
    
     
     params = collect_params({**kwargs, 'qty': qty, 'limit_price': limit_price, "order_class": "mleg", "type": "limit", "time_in_force": "day"})
-    payload = {**params, 'legs': [long_leg, short_leg]}
+    payload = {**params, 'legs': legs}
 
     print(payload)
     url = get_base_url() + '/orders'
