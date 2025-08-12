@@ -76,6 +76,38 @@ def parse_option_symbol(option_symbol: str) -> dict:
         'right': option_type,
         'strike': strike_price
     }
+def parse_option_symbol(option_symbol: str) -> dict:
+    """
+    Parse Alpaca option symbol format into its components.
+    
+    Args:
+        option_symbol: Option symbol in Alpaca format (e.g., 'AAPL250724C01200000')
+    
+    Returns:
+        A dictionary with root_symbol, expiration_date, option_type, and strike_price.
+    """
+    
+    # Extract root symbol (letters before the date)
+    root_symbol = ''.join(filter(str.isalpha, option_symbol[:-15]))
+    
+    # Extract expiration date (YYMMDD format)
+    date_str = option_symbol[len(root_symbol):len(root_symbol) + 6]
+    expiration_date = datetime.strptime(date_str, '%y%m%d').strftime('%Y-%m-%d')
+    
+    # Extract option type ('C' or 'P')
+    option_type = option_symbol[len(root_symbol) + 6]
+    option_type = 'C' if option_type == 'C' else 'P'
+    
+    # Extract strike price (last 8 digits, divide by 1000 to get float)
+    strike_str = option_symbol[-8:]
+    strike_price = int(strike_str) / 1000.0
+    
+    return {
+        'symbol': root_symbol,
+        'expiration_date': expiration_date,
+        'right': option_type,
+        'strike': strike_price
+    }
 
 
 def collect_params(args_dict, exclude: list[str] = []):
@@ -349,7 +381,7 @@ def get_orders(status: str, **kwargs):
     url = get_base_url() + '/orders'
     url = add_query_params(url, params)
     response = requests.get(url, headers=get_headers())
-    if response.status_code != 204:
+    if response.status_code != 200:
         logger.error(f'Error getting orders: {response.status_code} {response.text}')
         print(f'Error: {response.text} {response.status_code}')
         raise Exception(f'Error getting orders: {response.status_code} {response.text}')
@@ -433,4 +465,48 @@ def create_multi_leg_limit_order( legs: list[dict], qty: int, limit_price: float
         logger.error(f'Error creating multi-leg limit order: {response.status_code} {response.text}')
         print(f'Error: {response.text} {response.status_code}')
         raise Exception(f'Error creating multi-leg limit order: {response.status_code} {response.text}')
+    return response.json()
+
+
+def replace_order(order_id: str, **kwargs): 
+    """
+    Replace order
+    ref: https://docs.alpaca.markets/reference/patchorderbyorderid-1
+    params: 
+    - order_id: str
+    - qty: int
+    - time_in_force: str 'gtc' | 'ioc' | 'fok' | 'day' | 'opg'
+    - limit_price: str
+    - stop_price: str
+    - trail str
+    """
+    params = collect_params({**kwargs})
+    url = get_base_url() + f'/orders/{order_id}'
+    response = requests.patch(url, headers=get_headers(), json=params)
+    if response.status_code != 200:
+        logger.error(f'Error replacing order: {response.status_code} {response.text}')
+        print(f'Error: {response.text} {response.status_code}')
+        raise Exception(f'Error replacing order: {response.status_code} {response.text}')
+    return response.json()
+
+
+def replace_order(order_id: str, **kwargs): 
+    """
+    Replace order
+    ref: https://docs.alpaca.markets/reference/patchorderbyorderid-1
+    params: 
+    - order_id: str
+    - qty: int
+    - time_in_force: str 'gtc' | 'ioc' | 'fok' | 'day' | 'opg'
+    - limit_price: str
+    - stop_price: str
+    - trail str
+    """
+    params = collect_params({**kwargs})
+    url = get_base_url() + f'/orders/{order_id}'
+    response = requests.patch(url, headers=get_headers(), json=params)
+    if response.status_code != 200:
+        logger.error(f'Error replacing order: {response.status_code} {response.text}')
+        print(f'Error: {response.text} {response.status_code}')
+        raise Exception(f'Error replacing order: {response.status_code} {response.text}')
     return response.json()
