@@ -453,11 +453,39 @@ class DatabaseAdapter:
     def __init__(self):
         pass
 
-    def save_to_database(self, data, db, table_name, filter_data=True, _raise = False):
+    def save_to_database(self, 
+                         data: pd.DataFrame, 
+                         db: str, 
+                         table_name: str, 
+                         filter_data: bool=True, 
+                         _raise: bool = False):
+        """
+        Save data to a SQL database table. If the table does not exist, it will be created.
+        Parameters:
+        - data: DataFrame to be saved.
+        - db: Name of the database.
+        - table_name: Name of the table to save the data.
+        - filter_data: Whether to filter the data before saving (default is True).
+        - _raise: Whether to raise an exception if an error occurs (default is False).
+        """
+
+
         data = self.__filter_data(data) if filter_data else data
         store_SQL_data_Insert_Ignore(db, table_name, data, _raise=_raise)
 
-    def query_database(self, db, table_name, query):
+    def query_database(self, 
+                       db: str, 
+                       table_name: str, 
+                       query: str) -> pd.DataFrame:
+        """
+        Query the database and return the result as a pandas DataFrame.
+        Parameters:
+        - db: Name of the database.
+        - table_name: Name of the table to query.
+        - query: SQL query to execute.
+        Returns:
+        - DataFrame containing the query result.
+        """
         data = query_database(db, table_name, query)
         return data
 
