@@ -122,6 +122,62 @@ atexit.register(_dispose_all_engines)
 # signal.signal(signal.SIGTERM, signal_exit_handler)
 register_signal(signal.SIGTERM, _dispose_all_engines)
 
+
+
+def list_tables_from_db(db:str) -> list:
+    """
+    List all tables in the specified database.
+    Parameters
+    ----------
+    db : str
+        The name of the database to list tables from.
+    Returns
+    -------
+    list
+        A list of table names in the specified database.
+    """
+    # Get the database engine
+    engine = get_engine(db)
+
+    try:
+        # Connect to the database using the engine
+        with engine.connect() as connection:
+            # Query to list all tables in the database
+            result = connection.execute(text("SHOW TABLES"))
+            
+            # Fetch and return all table names
+            tables = [row[0] for row in result.fetchall()]
+            return tables
+    
+    except Exception as err:
+        print(f"Error: {err}")
+        return []
+
+def clear_table_data(db:str, table_name:str) -> bool:
+    """
+    Clear all data from the specified table in the given database.
+    
+    Parameters
+    ----------
+    db : str
+        The name of the database containing the table.
+    table_name : str
+        The name of the table to clear.
+    """
+    engine = get_engine(db)
+    with engine.connect() as connection:
+        result = connection.execute(text(f"DELETE FROM {table_name}"))
+        connection.execute(text(f"ALTER TABLE {table_name} AUTO_INCREMENT = 1"))  # Reset auto-increment if applicable
+
+        if result.rowcount > 0:
+            logger.info(f"Cleared {result.rowcount} rows from {table_name} in {db}.")
+            return True 
+        else:
+            logger.info(f"No rows cleared from {table_name} in {db}.")
+            return False
+        
+
+
 def store_SQL_data(db, sql_table_name, data, if_exists='append'):
     """
     Store data in a SQL table. If the table does not exist, it will be created.
@@ -333,7 +389,7 @@ def create_table_from_schema(engine, table_schema):
     try:
         metadata.create_all(engine)
         logger.info(
-            f"Table '{table_name}' has been created with columns: {[col.name for col in column_definitions]}", end = '\r')
+            f"Table '{table_name}' has been created with columns: {[col.name for col in column_definitions]}")
     except SQLAlchemyError as e:
         logger.info(f"An error occurred: {e}")
 
