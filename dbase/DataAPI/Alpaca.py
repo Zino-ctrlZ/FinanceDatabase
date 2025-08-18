@@ -349,7 +349,7 @@ def get_orders(status: str, **kwargs):
     url = get_base_url() + '/orders'
     url = add_query_params(url, params)
     response = requests.get(url, headers=get_headers())
-    if response.status_code != 204:
+    if response.status_code != 200:
         logger.error(f'Error getting orders: {response.status_code} {response.text}')
         print(f'Error: {response.text} {response.status_code}')
         raise Exception(f'Error getting orders: {response.status_code} {response.text}')
@@ -433,4 +433,48 @@ def create_multi_leg_limit_order( legs: list[dict], qty: int, limit_price: float
         logger.error(f'Error creating multi-leg limit order: {response.status_code} {response.text}')
         print(f'Error: {response.text} {response.status_code}')
         raise Exception(f'Error creating multi-leg limit order: {response.status_code} {response.text}')
+    return response.json()
+
+
+def replace_order(order_id: str, **kwargs): 
+    """
+    Replace order
+    ref: https://docs.alpaca.markets/reference/patchorderbyorderid-1
+    params: 
+    - order_id: str
+    - qty: int
+    - time_in_force: str 'gtc' | 'ioc' | 'fok' | 'day' | 'opg'
+    - limit_price: str
+    - stop_price: str
+    - trail str
+    """
+    params = collect_params({**kwargs})
+    url = get_base_url() + f'/orders/{order_id}'
+    response = requests.patch(url, headers=get_headers(), json=params)
+    if response.status_code != 200:
+        logger.error(f'Error replacing order: {response.status_code} {response.text}')
+        print(f'Error: {response.text} {response.status_code}')
+        raise Exception(f'Error replacing order: {response.status_code} {response.text}')
+    return response.json()
+
+
+def replace_order(order_id: str, **kwargs): 
+    """
+    Replace order
+    ref: https://docs.alpaca.markets/reference/patchorderbyorderid-1
+    params: 
+    - order_id: str
+    - qty: int
+    - time_in_force: str 'gtc' | 'ioc' | 'fok' | 'day' | 'opg'
+    - limit_price: str
+    - stop_price: str
+    - trail str
+    """
+    params = collect_params({**kwargs})
+    url = get_base_url() + f'/orders/{order_id}'
+    response = requests.patch(url, headers=get_headers(), json=params)
+    if response.status_code != 200:
+        logger.error(f'Error replacing order: {response.status_code} {response.text}')
+        print(f'Error: {response.text} {response.status_code}')
+        raise Exception(f'Error replacing order: {response.status_code} {response.text}')
     return response.json()
