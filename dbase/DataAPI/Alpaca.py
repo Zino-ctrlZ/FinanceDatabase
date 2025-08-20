@@ -456,25 +456,3 @@ def replace_order(order_id: str, **kwargs):
         print(f'Error: {response.text} {response.status_code}')
         raise Exception(f'Error replacing order: {response.status_code} {response.text}')
     return response.json()
-
-
-def replace_order(order_id: str, **kwargs): 
-    """
-    Replace order
-    ref: https://docs.alpaca.markets/reference/patchorderbyorderid-1
-    params: 
-    - order_id: str
-    - qty: int
-    - time_in_force: str 'gtc' | 'ioc' | 'fok' | 'day' | 'opg'
-    - limit_price: str
-    - stop_price: str
-    - trail str
-    """
-    params = collect_params({**kwargs})
-    url = get_base_url() + f'/orders/{order_id}'
-    response = requests.patch(url, headers=get_headers(), json=params)
-    if response.status_code != 200:
-        logger.error(f'Error replacing order: {response.status_code} {response.text}')
-        print(f'Error: {response.text} {response.status_code}')
-        raise Exception(f'Error replacing order: {response.status_code} {response.text}')
-    return response.json()
