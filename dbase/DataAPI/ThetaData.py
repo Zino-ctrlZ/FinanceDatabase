@@ -1106,7 +1106,7 @@ def resample(data, interval, custom_agg_columns = None, method = 'ffill', **kwar
     TIMEFRAME_MAP = {'d': 'B', 'h': 'BH', 'm': 'MIN',
                      'M': 'BME', 'w': 'W-FRI', 'q': 'BQE', 'y': 'BYS'}
     
-    if custom_agg_columns:
+    if custom_agg_columns is not None:
         columns = custom_agg_columns
     else:
 

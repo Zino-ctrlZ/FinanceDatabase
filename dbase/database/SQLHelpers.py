@@ -94,6 +94,9 @@ def _dispose_all_engines(*args, **kwargs):
             with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
                 f.write(f"Engine disposed: {str(pid)} on {datetime.now()}\n")
         except Exception as e:
+            if not os.path.exists(f'{os.environ["DBASE_DIR"]}/logs/atexit.log'):
+                os.makedirs(f'{os.environ["DBASE_DIR"]}/logs/atexit.log')
+                
             with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
                 f.write(f"Error Disposing Engine: {str(pid)}, {e} on {datetime.now()}\n")
             pass
