@@ -495,10 +495,10 @@ def ping_mysql() -> bool:
             connection_timeout=5
         )
         if connection.is_connected():
-            print("✅ MySQL connection successful.")
+            print("MySQL connection successful.")
             return True
     except Error as e:
-        print(f"❌ MySQL connecton failed: {e}")
+        print(f"MySQL connecton failed: {e}")
         return False
     finally:
         if 'connection' in locals() and connection.is_connected():
