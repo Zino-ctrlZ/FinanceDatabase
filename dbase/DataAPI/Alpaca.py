@@ -202,7 +202,7 @@ def get_option_chain(symbol: str, type: str, **kwargs):
     - limit: int
     - page_token: str
 
-    returns : {next_page_token: str, snapshots: dict} | None
+    returns : {next_page_token: str, snapshots: dict} | None 
     """
     params = collect_params({**kwargs, 'type': type}, exclude=['symbol'])
     url = f'https://data.alpaca.markets/v1beta1/options/snapshots/{symbol}'

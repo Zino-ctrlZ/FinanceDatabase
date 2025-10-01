@@ -94,6 +94,9 @@ def _dispose_all_engines(*args, **kwargs):
             with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
                 f.write(f"Engine disposed: {str(pid)} on {datetime.now()}\n")
         except Exception as e:
+            if not os.path.exists(f'{os.environ["DBASE_DIR"]}/logs/atexit.log'):
+                os.makedirs(f'{os.environ["DBASE_DIR"]}/logs/atexit.log')
+                
             with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', 'a') as f:
                 f.write(f"Error Disposing Engine: {str(pid)}, {e} on {datetime.now()}\n")
             pass
@@ -458,7 +461,10 @@ def dynamic_batch_update(db, table_name, update_values, condition):
               {f'cond_{col}': val for col, val in condition.items()}}
 
     with engine.begin() as conn:
-        conn.execute(query, params)
+        res = conn.execute(query, params)
+        if res.rowcount > 0:
+            logger.info(f"Updated {res.rowcount} rows in {table_name}.")
+            print(f"Updated {res.rowcount} rows in {table_name}.", end = '\r')
 
 def execute_query(db, table_name, query, params=None):
     """

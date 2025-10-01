@@ -681,7 +681,7 @@ def retrieve_quote_rt(symbol,
                     for x in data.columns}, inplace=True)
         data['time'] = data['Ms_of_day'].apply(lambda c: convert_milliseconds(c))
         data['Date2'] = pd.to_datetime(data.Date.astype(
-            str)).apply(lambda x: x.strftime('%Y-%m-%d'))  ## Change this to "%Y-%m-%d %H:%M:%S"
+            str)).apply(lambda x: x.strftime('%Y-%m-%d'))  ##TODO: Change this to "%Y-%m-%d %H:%M:%S"
         data['Date3'] = data.Date2 + ' ' + data.time
         data['datetime'] = pd.to_datetime(data.Date3)
         data.set_index('datetime', inplace=True)
@@ -1106,7 +1106,7 @@ def resample(data, interval, custom_agg_columns = None, method = 'ffill', **kwar
     TIMEFRAME_MAP = {'d': 'B', 'h': 'BH', 'm': 'MIN',
                      'M': 'BME', 'w': 'W-FRI', 'q': 'BQE', 'y': 'BYS'}
     
-    if custom_agg_columns:
+    if custom_agg_columns is not None:
         columns = custom_agg_columns
     else:
 
