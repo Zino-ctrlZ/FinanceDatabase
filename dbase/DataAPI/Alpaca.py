@@ -17,7 +17,7 @@ except ImportError:
 trading_client = TradingClient(os.environ.get('ALPACA_PAPER_KEY'), os.environ.get('ALPACA_PAPER_SECRET'))
 
 
-def generate_option_symbol(root_symbol: str, expiration_date: str, option_type: str, strike_price: float) -> str:
+def generate_option_symbol(symbol: str, expiration_date: str, right: str, strike: float) -> str:
     """
     Generate Alpaca option symbol format.
     
@@ -36,13 +36,13 @@ def generate_option_symbol(root_symbol: str, expiration_date: str, option_type: 
     date_str = date_obj.strftime('%y%m%d')  # YYMMDD format
     
     # Convert option type to single letter
-    option_letter = option_type.upper()[0]  # 'call' -> 'C', 'put' -> 'P'
+    option_letter = right.upper()[0]  # 'call' -> 'C', 'put' -> 'P'
     
     # Format strike price (remove decimal, pad to 8 digits)
     # Multiply by 1000 to get the correct format (e.g., 120.0 -> 120000)
-    strike_str = f"{int(strike_price * 1000):08d}"
+    strike_str = f"{int(strike * 1000):08d}"
     
-    return f"{root_symbol}{date_str}{option_letter}{strike_str}"
+    return f"{symbol}{date_str}{option_letter}{strike_str}"
 
 def parse_option_symbol(option_symbol: str) -> dict:
     """

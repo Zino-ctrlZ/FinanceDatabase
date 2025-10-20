@@ -38,6 +38,24 @@ logger = setup_logger('SQLHelpers.py')  # Using a module-specific logger
 _PROCESS_ENGINE_CACHE = {}
 _PYMYSQL_CONNECTION_CACHE = {}
 dbs = ['securities_master', 'vol_surface']
+mysql_to_python = {
+    "int": "int",
+    "bigint": "int",
+    "decimal": "float",
+    "float": "float",
+    "double": "float",
+    "varchar": "str",
+    "char": "str",
+    "text": "str",
+    "datetime": "datetime.datetime",
+    "timestamp": "datetime.datetime",
+    "date": "datetime.date",
+    "json": "dict",
+    "tinyint": "bool",
+}
+portfolio_data_db = 'portfolio_data'
+
+
 
 
 def create_engine_short(db):
@@ -246,7 +264,21 @@ def _query_database_testing(db,tbl_name, query):
         with conn.cursor() as cur:
             cur.execute(query)
             rows = cur.fetchall()                   # this is a list of dicts
-        return pd.DataFrame.from_records(rows)     # “fast path” into a DataFrame
+        return pd.DataFrame.from_records(rows)     # "fast path" into a DataFrame
+    except pymysql.Error as e:
+        logger.error(f"Error executing query: {e}")
+        raise e
+
+def query_database_as_dict(db, table_name, query):
+    """
+    Query the database and return result as a list of dictionaries.
+    """
+    conn = get_pymysql_connection(db)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query)
+            rows = cur.fetchall()  # This returns list of dicts with DictCursor
+        return rows
     except pymysql.Error as e:
         logger.error(f"Error executing query: {e}")
         raise e
@@ -290,6 +322,26 @@ def create_SQL_database(connection, db_name):
     connection.commit()
     logger.info("Database created successfully", end = '\r')
     close_SQL_connection(connection, cursor)
+
+
+def get_table_schema(db_name, table_name) -> list[dict[str, str]]: 
+    engine = get_engine('portfolio_data')
+    engine.connect()
+    query = text(f"""
+            SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = '{db_name}' AND TABLE_NAME = '{table_name}';
+        """)
+    types = []
+    try: 
+        with engine.connect() as connection:
+            result = connection.execute(query)
+            types = [dict(row._mapping) for row in result]
+
+    except Exception as err:
+        print(f"Error: {err}")
+
+    return types
 
 
 def create_table_from_schema(engine, table_schema):
