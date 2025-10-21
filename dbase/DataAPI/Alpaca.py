@@ -44,7 +44,7 @@ def generate_option_symbol(symbol: str, expiration_date: str, right: str, strike
     
     return f"{symbol}{date_str}{option_letter}{strike_str}"
 
-def parse_option_symbol(option_symbol: str) -> dict:
+def parse_option_symbol(option_symbol: str) -> dict | None:
     """
     Parse Alpaca option symbol format into its components.
     
@@ -54,28 +54,31 @@ def parse_option_symbol(option_symbol: str) -> dict:
     Returns:
         A dictionary with root_symbol, expiration_date, option_type, and strike_price.
     """
-    
-    # Extract root symbol (letters before the date)
-    root_symbol = ''.join(filter(str.isalpha, option_symbol[:-15]))
-    
-    # Extract expiration date (YYMMDD format)
-    date_str = option_symbol[len(root_symbol):len(root_symbol) + 6]
-    expiration_date = datetime.strptime(date_str, '%y%m%d').strftime('%Y-%m-%d')
-    
-    # Extract option type ('C' or 'P')
-    option_type = option_symbol[len(root_symbol) + 6]
-    option_type = 'C' if option_type == 'C' else 'P'
-    
-    # Extract strike price (last 8 digits, divide by 1000 to get float)
-    strike_str = option_symbol[-8:]
-    strike_price = int(strike_str) / 1000.0
-    
-    return {
-        'symbol': root_symbol,
-        'expiration_date': expiration_date,
-        'right': option_type,
-        'strike': strike_price
-    }
+    try:
+        # Extract root symbol (letters before the date)
+        root_symbol = ''.join(filter(str.isalpha, option_symbol[:-15]))
+        
+        # Extract expiration date (YYMMDD format)
+        date_str = option_symbol[len(root_symbol):len(root_symbol) + 6]
+        expiration_date = datetime.strptime(date_str, '%y%m%d').strftime('%Y-%m-%d')
+        
+        # Extract option type ('C' or 'P')
+        option_type = option_symbol[len(root_symbol) + 6]
+        option_type = 'C' if option_type == 'C' else 'P'
+        
+        # Extract strike price (last 8 digits, divide by 1000 to get float)
+        strike_str = option_symbol[-8:]
+        strike_price = int(strike_str) / 1000.0
+        
+        return {
+            'symbol': root_symbol,
+            'expiration_date': expiration_date,
+            'right': option_type,
+            'strike': strike_price
+        }
+    except Exception as e:
+        print(f'Error parsing option symbol: {e}')
+        return None
 
 
 def collect_params(args_dict, exclude: list[str] = []):
