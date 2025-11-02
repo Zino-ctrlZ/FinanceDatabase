@@ -940,7 +940,7 @@ def retrieve_bulk_open_interest(
         return resolve_ticker_history(pass_kwargs, retrieve_bulk_open_interest, _type = 'historical')
 
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
-    exp = int(pd.to_datetime(exp).strftime('%Y%m%d'))
+    exp = int(pd.to_datetime(exp).strftime('%Y%m%d')) if exp else 0
     start_date = int(pd.to_datetime(start_date).strftime('%Y%m%d'))
     url = 'http://127.0.0.1:25510/v2/bulk_hist/option/open_interest'
     querystring = {
