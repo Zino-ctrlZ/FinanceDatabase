@@ -517,6 +517,7 @@ def dynamic_batch_update(db, table_name, update_values, condition):
         if res.rowcount > 0:
             logger.info(f"Updated {res.rowcount} rows in {table_name}.")
             print(f"Updated {res.rowcount} rows in {table_name}.", end = '\r')
+    return res.rowcount > 0
 
 def execute_query(db, table_name, query, params=None):
     """

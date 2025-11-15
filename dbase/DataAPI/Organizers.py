@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from trade.helpers.helper import * ## Note: No need to import all functions, just the ones you need
 from dotenv import load_dotenv
-from trade.helpers.types import OptionModelAttributes
+from trade.helpers.helper_types import OptionModelAttributes
 from trade.models.utils import resolve_missing_vol
 
 
