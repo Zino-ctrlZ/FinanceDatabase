@@ -85,8 +85,8 @@ def resolve_ticker_history(kwargs, _callable, _type = 'historical'):
             old_tick_data = _callable(**old_tick_kwargs) if compare_dates.is_before(pd.Timestamp(kwargs['start_date']), pd.Timestamp(change_date)) else None
             old_tick_data = old_tick_data[old_tick_data.index.duplicated(keep = 'first')] if old_tick_data is not None else None
         except ThetaDataNotFound as e:
-            logger.error(f'No data found for Old_tick {old_tick} on {kwargs["start_date"]}')
-            logger.error(f'Error: {e}')
+            logger.info(f'No data found for Old_tick {old_tick} on {kwargs["start_date"]}')
+            logger.info(f'Error: {e}')
             old_tick_data = None
         
         ## Retrieve the data for the new tick
@@ -94,8 +94,8 @@ def resolve_ticker_history(kwargs, _callable, _type = 'historical'):
             new_tick_data = _callable(**new_tick_kwargs) if compare_dates.is_on_or_after(pd.Timestamp(kwargs['exp']), pd.Timestamp(change_date)) else None ## Opting for expiration date instead of end date cause data cannot go beyond expiration date
             new_tick_data = new_tick_data[~new_tick_data.index.duplicated(keep = 'first')] if new_tick_data is not None else None
         except ThetaDataNotFound as e:
-            logger.error(f'No data found for new_tick {new_tick} on {kwargs["exp"]}')
-            logger.error(f'Error: {e}')
+            logger.info(f'No data found for new_tick {new_tick} on {kwargs["exp"]}')
+            logger.info(f'Error: {e}')
             new_tick_data = None
 
         ## If no data is found for the old tick, then we will just return the new tick data. Change to dataframe to avoid errors when concatenating
@@ -923,7 +923,6 @@ def retrieve_bulk_open_interest(
     print_url = False,
     **kwargs
 ):
-
     if not proxy:
         proxy = get_proxy_url()
 
@@ -937,7 +936,7 @@ def retrieve_bulk_open_interest(
     depth = pass_kwargs['depth'] = kwargs.get('depth', 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs['depth'] += 1
-        return resolve_ticker_history(pass_kwargs, retrieve_bulk_open_interest, _type = 'historical')
+        return resolve_ticker_history(pass_kwargs, retrieve_bulk_open_interest, _type = 'snapshot')
 
     end_date = int(pd.to_datetime(end_date).strftime('%Y%m%d'))
     exp = int(pd.to_datetime(exp).strftime('%Y%m%d')) if exp else 0
