@@ -11,6 +11,8 @@ def add_eod_timestamp(index):
     If the index is a datetime object and the time is 00:00:00, it adds PRICING_CONFIG['MARKET_CLOSE_TIME'] hours to the index.
     If not, it returns the index as is.
     """
+    if len(index) == 0:
+        return index
     str_time = PRICING_CONFIG["MARKET_CLOSE_TIME"]
     str_time = int(str_time.split(":")[0])
     index = pd.to_datetime(index)

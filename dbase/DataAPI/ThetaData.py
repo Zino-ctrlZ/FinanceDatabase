@@ -71,6 +71,12 @@ if get_proxy_url() is None:
 else:
     print(f"Using Proxy URL: {get_proxy_url()}")
 
+EMPTY_DF_SAMPLES = {
+    "retrieve_openInterest": pd.DataFrame(
+        columns=["Open_interest", "Date", "time", "Datetime"]
+    )
+}
+
 
 def quote_to_eod_patch(
     symbol: str,
@@ -117,21 +123,38 @@ def quote_to_eod_patch(
         interval="1d",
     )
     q.index = add_eod_timestamp(q.index)
-    q_to_eod = q[
-        [
-            "Open",
-            "High",
-            "Low",
-            "Close",
-            "Volume",
-            "Bid_size",
-            "Closebid",
-            "Ask_size",
-            "Closeask",
-            "Midpoint",
-            "Weighted_midpoint",
+    if not q.empty:
+        q_to_eod = q[
+            [
+                "Open",
+                "High",
+                "Low",
+                "Close",
+                "Volume",
+                "Bid_size",
+                "Closebid",
+                "Ask_size",
+                "Closeask",
+                "Midpoint",
+                "Weighted_midpoint",
+            ]
         ]
-    ]
+    else:
+        q_to_eod = pd.DataFrame(
+            columns=[
+                "Open",
+                "High",
+                "Low",
+                "Close",
+                "Volume",
+                "Bid_size",
+                "Closebid",
+                "Ask_size",
+                "Closeask",
+                "Midpoint",
+                "Weighted_midpoint",
+            ]
+        )
     q_to_eod.rename(
         columns={
             "Closebid": "CloseBid",
@@ -139,7 +162,7 @@ def quote_to_eod_patch(
         },
         inplace=True,
     )
-    q_to_eod.index = pd.to_datetime(q_to_eod.index.date)
+    q_to_eod.index = pd.to_datetime(q_to_eod.index)
     q_to_eod.index.name = "Datetime"
     return q_to_eod
 
@@ -198,11 +221,10 @@ def resolve_ticker_history(kwargs, _callable, _type="historical"):
         ## If no data is found for the old tick, then we will just return the new tick data. Change to dataframe to avoid errors when concatenating
         if old_tick_data is None:
             logger.info(f"No data found for Old_tick {old_tick}")
-            old_tick_data = pd.DataFrame()
+            old_tick_data = EMPTY_DF_SAMPLES.get(_callable.__name__, pd.DataFrame())
         if new_tick_data is None:
             logger.info(f"No data found for new_tick {new_tick}")
-            new_tick_data = pd.DataFrame()
-
+            new_tick_data = EMPTY_DF_SAMPLES.get(_callable.__name__, pd.DataFrame())
         full_data = pd.concat([old_tick_data, new_tick_data])
         return full_data
     elif _type == "snapshot":
@@ -1226,15 +1248,16 @@ def retrieve_quote(
     if ohlc_format:
         data = bootstrap_ohlc(data, copy_column="Midpoint")
 
-    return resample(data, interval=interval)
+    # return resample(data, interval=interval)
+    return data
 
 
-@backoff.on_exception(
-    backoff.expo,
-    (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
-    max_tries=5,
-    logger=logger,
-)
+# @backoff.on_exception(
+#     backoff.expo,
+#     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
+#     max_tries=5,
+#     logger=logger,
+# )
 def retrieve_openInterest(
     symbol,
     end_date: str,
@@ -1263,7 +1286,6 @@ def retrieve_openInterest(
     }
     if not proxy:
         proxy = get_proxy_url()
-
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
@@ -1296,6 +1318,7 @@ def retrieve_openInterest(
         response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}"
         print(response_url) if print_url else None
         raise_thetadata_exception(response, querystring, proxy)
+
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
@@ -1581,17 +1604,19 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
         columns = custom_agg_columns
     else:
         columns = {
-            "Open": "first",
-            "High": "max",
-            "Low": "min",
-            "Close": "last",
-            "Volume": "sum",
-            "Bid_size": "last",
-            "CloseBid": "last",
-            "Ask_size": "last",
-            "CloseAsk": "last",
-            "Midpoint": "last",
-            "Weighted_midpoint": "last",
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+            "bid_size": "last",
+            "closebid": "last",
+            "close_bid": "last",
+            "close_ask": "last",
+            "ask_size": "last",
+            "closeask": "last",
+            "midpoint": "last",
+            "weighted_midpoint": "last",
         }
 
     assert (
@@ -1604,8 +1629,10 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
         resampled = []
 
         for col in data.columns:
-            if col in columns.keys():
-                resampled.append(resample(data[col], interval, method=columns[col]))
+            if col.lower() in columns.keys():  ## Standard Column Resample
+                resampled.append(
+                    resample(data[col], interval, method=columns[col.lower()])
+                )
             else:
                 resampled.append(resample(data[col], interval, method=method))
         data = pd.concat(resampled, axis=1)
