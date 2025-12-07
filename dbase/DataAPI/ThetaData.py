@@ -1792,6 +1792,7 @@ def retrieve_chain_bulk(
     right=None,
     proxy=None,
     print_url=False,
+    oi=False,
     **kwargs,
 ) -> pd.DataFrame:
     pass_kwargs = {
@@ -1801,6 +1802,7 @@ def retrieve_chain_bulk(
         "end_date": end_date,
         "end_time": end_time,
         "print_url": print_url,
+        "oi": oi,
     }
     if not proxy:
         proxy = get_proxy_url()
@@ -1809,7 +1811,7 @@ def retrieve_chain_bulk(
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d")) if exp else 0
     start_date = int(pd.to_datetime(start_date).strftime("%Y%m%d"))
     end_time = str(convert_time_to_miliseconds(end_time))
-    url = "http://127.0.0.1:25510/v2/bulk_at_time/option/quote"
+    url = f"http://127.0.0.1:25510/v2/bulk_at_time/option/{'quote' if not oi else 'open_interest'}"
     querystring = {
         "root": symbol,
         "exp": exp,
