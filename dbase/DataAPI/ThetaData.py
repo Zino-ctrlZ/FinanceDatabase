@@ -1248,16 +1248,16 @@ def retrieve_quote(
     if ohlc_format:
         data = bootstrap_ohlc(data, copy_column="Midpoint")
 
-    # return resample(data, interval=interval)
-    return data
+    return resample(data, interval=interval)
+    # return data
 
 
-# @backoff.on_exception(
-#     backoff.expo,
-#     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
-#     max_tries=5,
-#     logger=logger,
-# )
+@backoff.on_exception(
+    backoff.expo,
+    (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
+    max_tries=5,
+    logger=logger,
+)
 def retrieve_openInterest(
     symbol,
     end_date: str,
