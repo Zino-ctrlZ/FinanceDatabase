@@ -35,7 +35,7 @@ from functools import lru_cache
 from dotenv import load_dotenv
 import atexit
 import signal
-from .Database import clear_database_name_cache, get_database_name
+from Database import clear_database_name_cache, get_database_name
 import re
 
 load_dotenv()

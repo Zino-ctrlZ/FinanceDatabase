@@ -16,47 +16,37 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from .Database import Database
-from .SQLHelpers import get_engine, sql_host, sql_user, sql_pw, sql_port
+from Database import Database
+from SQLHelpers import get_engine, sql_host, sql_user, sql_pw, sql_port
 
 
-def _validate_database_input(name: str, value: str, field_type: str = "database_name") -> None:
+def validate_database_input(value: str) -> None:
     """
     Validate database-related input strings to prevent SQL injection.
 
     Args:
-        name: Field name for error messages
         value: Value to validate
-        field_type: Type of validation ('database_name', 'environment', 'branch_name')
 
     Raises:
         ValueError: If validation fails
     """
     if not value or not isinstance(value, str):
-        raise ValueError(f"{name} must be a non-empty string")
+        raise ValueError("Value must be a non-empty string")
 
     # Basic safety: no SQL injection characters
-    dangerous_chars = ["'", '"', ';', '--', '/*', '*/', '`', '\n', '\r']
+    dangerous_chars = ["'", '"', ";", "--", "/*", "*/", "`", "\n", "\r"]
     for char in dangerous_chars:
         if char in value:
-            raise ValueError(f"{name} contains invalid character: {repr(char)}")
+            raise ValueError(f"Value contains invalid character: {repr(char)}")
 
-    # Additional validation based on type
-    if field_type == "database_name":
-        # Database names should be alphanumeric with underscores/hyphens
-        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
-            raise ValueError(
-                f"{name} must contain only alphanumeric characters, underscores, or hyphens"
-            )
-    elif field_type == "environment":
-        # Environment names: alphanumeric, underscores, hyphens
-        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
-            raise ValueError(
-                f"{name} must contain only alphanumeric characters, underscores, or hyphens"
-            )
+    # Validate format: alphanumeric with underscores/hyphens only
+    if not re.match(r"^[a-zA-Z0-9_-]+$", value):
+        raise ValueError(
+            "Value must contain only alphanumeric characters, underscores, or hyphens"
+        )
 
 
-def _get_databases_for_environment(environment: str) -> dict[str, str]:
+def get_databases_for_environment(environment: str) -> dict[str, str]:
     """
     Get all databases for a given environment.
 
@@ -67,7 +57,7 @@ def _get_databases_for_environment(environment: str) -> dict[str, str]:
         dict: Mapping of base_name -> database_name
     """
     # Validate input
-    _validate_database_input("environment", environment, "environment")
+    validate_database_input(environment)
 
     # Use parameterized query to prevent SQL injection
     query = text("""
@@ -77,19 +67,19 @@ def _get_databases_for_environment(environment: str) -> dict[str, str]:
         AND is_active = TRUE
     """)
 
-    engine = get_engine('master_config')
+    engine = get_engine("master_config")
     result = pd.read_sql(query, engine, params={"env": environment})
 
     if result.empty:
         return {}
 
-    return dict(zip(result['base_name'], result['database_name']))
+    return dict(zip(result["base_name"], result["database_name"]))
 
 
-def _check_database_conflict(db_name: str) -> None:
+def check_database_conflict(db_name: str) -> None:
     """Check if database name conflicts with existing database."""
     # Validate input
-    _validate_database_input("db_name", db_name, "database_name")
+    validate_database_input(db_name)
 
     # Use parameterized query
     query = text("""
@@ -99,7 +89,7 @@ def _check_database_conflict(db_name: str) -> None:
         AND is_active = TRUE
     """)
 
-    engine = get_engine('master_config')
+    engine = get_engine("master_config")
     result = pd.read_sql(query, engine, params={"db_name": db_name})
 
     if not result.empty:
@@ -110,19 +100,16 @@ def _check_database_conflict(db_name: str) -> None:
         )
 
 
-def _register_database(
-    database_name: str,
-    base_name: str,
-    environment: str,
-    branch_name: str
+def register_database(
+    database_name: str, base_name: str, environment: str, branch_name: str
 ) -> None:
     """Register a new database in master_config.database_configs."""
     # Validate all inputs
-    _validate_database_input("database_name", database_name, "database_name")
-    _validate_database_input("base_name", base_name, "database_name")
-    _validate_database_input("environment", environment, "environment")
+    validate_database_input(database_name)
+    validate_database_input(base_name)
+    validate_database_input(environment)
     if branch_name:  # branch_name can be None
-        _validate_database_input("branch_name", branch_name, "branch_name")
+        validate_database_input(branch_name)
 
     # Use parameterized query to prevent SQL injection
     query = text("""
@@ -131,15 +118,18 @@ def _register_database(
         VALUES (:database_name, :base_name, :environment, :branch_name, 'system')
     """)
 
-    engine = get_engine('master_config')
+    engine = get_engine("master_config")
     try:
         with engine.begin() as conn:  # Automatic transaction handling
-            conn.execute(query, {
-                "database_name": database_name,
-                "base_name": base_name,
-                "environment": environment,
-                "branch_name": branch_name
-            })
+            conn.execute(
+                query,
+                {
+                    "database_name": database_name,
+                    "base_name": base_name,
+                    "environment": environment,
+                    "branch_name": branch_name,
+                },
+            )
     except IntegrityError as e:
         # Handle unique key constraint violation
         raise ValueError(
@@ -148,7 +138,7 @@ def _register_database(
         ) from e
 
 
-def _clone_database_schema(
+def clone_database_schema(
     source_db: str,
     target_db: str,
     *,
@@ -179,108 +169,114 @@ def _clone_database_schema(
         extra_mysqldump_args: Additional arguments to pass to mysqldump
     """
     # Validate inputs
-    _validate_database_input("source_db", source_db, "database_name")
-    _validate_database_input("target_db", target_db, "database_name")
+    validate_database_input(source_db)
+    validate_database_input(target_db)
+    try:
+        # Check for None values in SQL connection parameters
+        if not sql_host:
+            raise ValueError("MYSQL_HOST environment variable is not set")
+        if not sql_user:
+            raise ValueError("MYSQL_USER environment variable is not set")
+        if not sql_port:
+            raise ValueError("MYSQL_PORT environment variable is not set")
+        # sql_pw can be None (no password), but we check it before using
 
-    # Check for None values in SQL connection parameters
-    if not sql_host:
-        raise ValueError("MYSQL_HOST environment variable is not set")
-    if not sql_user:
-        raise ValueError("MYSQL_USER environment variable is not set")
-    if not sql_port:
-        raise ValueError("MYSQL_PORT environment variable is not set")
-    # sql_pw can be None (no password), but we check it before using
+        # Conservative name safety check
+        illegal = re.compile(r"[`\s;]")
+        if illegal.search(source_db) or illegal.search(target_db):
+            raise ValueError(
+                "Database names may not contain spaces, backticks, or semicolons."
+            )
 
-    # Conservative name safety check
-    illegal = re.compile(r"[`\s;]")
-    if illegal.search(source_db) or illegal.search(target_db):
-        raise ValueError("Database names may not contain spaces, backticks, or semicolons.")
+        env = os.environ.copy()
+        # Avoid putting password into process args (visible in process list).
+        if sql_pw:
+            env["MYSQL_PWD"] = str(sql_pw)
 
-    env = os.environ.copy()
-    # Avoid putting password into process args (visible in process list).
-    if sql_pw:
-        env["MYSQL_PWD"] = str(sql_pw)
+        extra_mysqldump_args = extra_mysqldump_args or []
 
-    extra_mysqldump_args = extra_mysqldump_args or []
-
-    # 1) Dump (schema-only by default). Use --databases to include CREATE DATABASE + USE.
-    dump_cmd = [
-        "mysqldump",
-        f"--host={sql_host}",
-        f"--port={sql_port}",
-        f"--user={sql_user}",
-        "--databases",
-        source_db,
-        "--single-transaction",
-        "--skip-comments",
-        "--skip-add-drop-database",  # do NOT emit DROP DATABASE
-        "--set-charset",
-        *extra_mysqldump_args,
-    ]
-
-    if schema_only:
-        dump_cmd.append("--no-data")
-
-    # Include optional objects.
-    if include_routines:
-        dump_cmd.append("--routines")
-    if include_events:
-        dump_cmd.append("--events")
-    if include_triggers:
-        # mysqldump includes triggers by default; add explicitly for clarity
-        dump_cmd.append("--triggers")
-    else:
-        dump_cmd.append("--skip-triggers")
-
-    result = subprocess.run(dump_cmd, capture_output=True, text=True, check=True, env=env)
-    dump_sql = result.stdout
-
-    # 2) Rewrite CREATE DATABASE / USE so the dump targets the new DB name.
-    # Anchor to line starts to avoid accidental replacements elsewhere.
-    #
-    # Typical mysqldump emits lines like:
-    #   CREATE DATABASE /*!32312 IF NOT EXISTS*/ `source_db` ...
-    #   USE `source_db`;
-    #
-    # We rewrite only the database routing, not table DDL.
-    dump_sql = re.sub(
-        rf"(?m)^(CREATE DATABASE\b.*?`){re.escape(source_db)}(`)",
-        rf"\1{target_db}\2",
-        dump_sql,
-    )
-    dump_sql = re.sub(
-        rf"(?m)^(USE `){re.escape(source_db)}(`;)",
-        rf"\1{target_db}\2",
-        dump_sql,
-    )
-
-    # Optional: strip DEFINER clauses to prevent restore failures if definers don't exist on target server.
-    # This is common when moving dumps across environments/users.
-    if strip_definers:
-        dump_sql = re.sub(r"DEFINER=`[^`]+`@`[^`]+`", "DEFINER=CURRENT_USER", dump_sql)
-
-    # 3) Ensure the target DB exists (even if the rewritten dump creates it, this makes failures clearer).
-    create_db_sql = f"CREATE DATABASE IF NOT EXISTS `{target_db}`;"
-    subprocess.run(
-        [
-            "mysql",
+        # 1) Dump (schema-only by default). Use --databases to include CREATE DATABASE + USE.
+        dump_cmd = [
+            "mysqldump",
             f"--host={sql_host}",
             f"--port={sql_port}",
             f"--user={sql_user}",
-            "-e",
-            create_db_sql,
-        ],
-        check=True,
-        env=env,
-    )
+            "--databases",
+            source_db,
+            "--single-transaction",
+            "--skip-comments",
+            "--skip-add-drop-database",  # do NOT emit DROP DATABASE
+            "--set-charset",
+            "--skip-routines",
+            *extra_mysqldump_args,
+        ]
 
-    # 4) Restore using mysql client (stdin). This is the robust path for routines/triggers/events.
-    # Use a temp file so the operator can optionally inspect it during debugging.
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False, suffix=".sql") as tf:
-        tf.write(dump_sql)
-        tmp_path = Path(tf.name)
+        if schema_only:
+            dump_cmd.append("--no-data")
 
-    try:
+        # Include optional objects.
+        if include_events:
+            dump_cmd.append("--events")
+        if include_triggers:
+            # mysqldump includes triggers by default; add explicitly for clarity
+            dump_cmd.append("--triggers")
+        else:
+            dump_cmd.append("--skip-triggers")
+
+        result = subprocess.run(
+            dump_cmd, capture_output=True, text=True, check=True, env=env
+        )
+        dump_sql = result.stdout
+
+        # 2) Rewrite CREATE DATABASE / USE so the dump targets the new DB name.
+        # Anchor to line starts to avoid accidental replacements elsewhere.
+        #
+        # Typical mysqldump emits lines like:
+        #   CREATE DATABASE /*!32312 IF NOT EXISTS*/ `source_db` ...
+        #   USE `source_db`;
+        #
+        # We rewrite only the database routing, not table DDL.
+        dump_sql = re.sub(
+            rf"(?m)^(CREATE DATABASE\b.*?`){re.escape(source_db)}(`)",
+            rf"\1{target_db}\2",
+            dump_sql,
+        )
+        dump_sql = re.sub(
+            rf"(?m)^(USE `){re.escape(source_db)}(`;)",
+            rf"\1{target_db}\2",
+            dump_sql,
+        )
+
+        # Optional: strip DEFINER clauses to prevent restore failures if definers don't exist on target server.
+        # This is common when moving dumps across environments/users.
+        if strip_definers:
+            dump_sql = re.sub(
+                r"DEFINER=`[^`]+`@`[^`]+`", "DEFINER=CURRENT_USER", dump_sql
+            )
+
+        # 3) Ensure the target DB exists (even if the rewritten dump creates it, this makes failures clearer).
+        create_db_sql = f"CREATE DATABASE IF NOT EXISTS `{target_db}`;"
+        subprocess.run(
+            [
+                "mysql",
+                f"--host={sql_host}",
+                f"--port={sql_port}",
+                f"--user={sql_user}",
+                "-e",
+                create_db_sql,
+            ],
+            check=True,
+            env=env,
+        )
+
+        # 4) Restore using mysql client (stdin). This is the robust path for routines/triggers/events.
+        # Use a temp file so the operator can optionally inspect it during debugging.
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", delete=False, suffix=".sql"
+        ) as tf:
+            tf.write(dump_sql)
+            tmp_path = Path(tf.name)
+
         with tmp_path.open("r", encoding="utf-8") as f:
             subprocess.run(
                 [
@@ -295,6 +291,13 @@ def _clone_database_schema(
                 env=env,
                 text=True,
             )
+    except subprocess.CalledProcessError as e:
+        error_msg = f"mysql restore failed with exit code {e.returncode}"
+        if e.stderr:
+            error_msg += f"\nmysql error: {e.stderr}"
+        raise RuntimeError(error_msg) from e
+    except Exception as e:
+        raise RuntimeError(f"Error cloning database schema: {e}") from e
     finally:
         # Remove temp file; comment out if you want to keep dumps for audit/debug.
         try:
@@ -306,9 +309,9 @@ def _clone_database_schema(
 def create_test_environment(
     environment: str,
     branch_name: str,
-    source_environment: str = 'prod',
+    source_environment: str = "prod",
     exclude_databases: Optional[list[str]] = None,
-    schema_only: bool = True
+    schema_only: bool = True,
 ) -> dict[str, str]:
     """
     Create test environment by cloning prod schemas.
@@ -329,17 +332,17 @@ def create_test_environment(
       so partial success is acceptable. Manual cleanup can remove orphaned databases.
     """
     # Validate inputs
-    _validate_database_input("environment", environment, "environment")
+    validate_database_input(environment)
     if branch_name:
-        _validate_database_input("branch_name", branch_name, "branch_name")
-    _validate_database_input("source_environment", source_environment, "environment")
+        validate_database_input(branch_name)
+    validate_database_input(source_environment)
 
     exclude = set(Database.EXCLUDED_DATABASES)
     if exclude_databases:
         exclude.update(exclude_databases)
 
     # Get source databases
-    source_dbs = _get_databases_for_environment(source_environment)
+    source_dbs = get_databases_for_environment(source_environment)
 
     created = {}
     for base_name, source_db_name in source_dbs.items():
@@ -349,13 +352,13 @@ def create_test_environment(
         target_db_name = f"{base_name}_{environment}"
 
         # Check for conflicts
-        _check_database_conflict(target_db_name)
+        check_database_conflict(target_db_name)
 
         # Clone schema (and optionally data)
-        _clone_database_schema(source_db_name, target_db_name, schema_only=schema_only)
+        clone_database_schema(source_db_name, target_db_name, schema_only=schema_only)
 
         # Register in master_config
-        _register_database(target_db_name, base_name, environment, branch_name)
+        register_database(target_db_name, base_name, environment, branch_name)
 
         created[base_name] = target_db_name
 
@@ -366,24 +369,24 @@ def __main__():
     """CLI entry point for creating test environments."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Create a test environment by cloning prod schemas.")
+    parser = argparse.ArgumentParser(
+        description="Create a test environment by cloning prod schemas."
+    )
     parser.add_argument(
         "--env",
         required=True,
-        help="Target environment name (e.g., mean-reversion => test-mean-reversion)."
+        help="Target environment name (e.g., mean-reversion => test-mean-reversion).",
     )
     parser.add_argument("--branch", required=True, help="Git branch name.")
     parser.add_argument(
         "--source-env",
         default="prod",
-        help="Source environment to clone from (default: prod)."
+        help="Source environment to clone from (default: prod).",
     )
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
-        "--schema-only",
-        action="store_true",
-        help="Clone schema only (default)."
+        "--schema-only", action="store_true", help="Clone schema only (default)."
     )
     group.add_argument("--with-data", action="store_true", help="Clone schema + data.")
 
@@ -418,4 +421,3 @@ def __main__():
 
 if __name__ == "__main__":
     __main__()
-
