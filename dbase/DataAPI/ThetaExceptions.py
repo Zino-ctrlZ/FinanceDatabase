@@ -1,4 +1,4 @@
-import backoff
+
 from trade.helpers.Logging import setup_logger
 logger = setup_logger('dbase.DataAPI.ThetaExceptions')
 
@@ -61,10 +61,13 @@ class ThetaDataUnknownError(Exception):
     pass
 
 
-def raise_thetadata_exception(response, params = {}, proxy = None):
+def raise_thetadata_exception(response, params = None, proxy = None):
     """
     Raise an exception if the response indicates an error.
     """
+    if params is None:
+        params = {}
+        
     if proxy is None:
         code = response.status_code
         params['url'] = response.url

@@ -256,7 +256,7 @@ def request_from_proxy(thetaUrl, queryparam, instanceUrl, print_url=False):
     response = requests.request("POST", instanceUrl, headers=headers, data=payload)
     return response
 
-
+## Migrate to new API
 def greek_snapshot(symbol, proxy=None):
     if not proxy:
         proxy = get_proxy_url()
@@ -273,7 +273,7 @@ def greek_snapshot(symbol, proxy=None):
         else pd.read_csv(StringIO(response.json()["data"]))
     )
 
-
+## Migrate to new API
 def ohlc_snapshot(symbol, proxy=None):
     if not proxy:
         proxy = get_proxy_url()
@@ -290,7 +290,7 @@ def ohlc_snapshot(symbol, proxy=None):
         else pd.read_csv(StringIO(response.json()["data"]))
     )
 
-
+## Migrate to new API
 def open_interest_snapshot(symbol, proxy=None):
     if not proxy:
         proxy = get_proxy_url()
@@ -307,7 +307,7 @@ def open_interest_snapshot(symbol, proxy=None):
         else pd.read_csv(StringIO(response.json()["data"]))
     )
 
-
+## Migrate to new API
 def quote_snapshot(symbol, proxy=None):
     if not proxy:
         proxy = get_proxy_url()
@@ -324,7 +324,7 @@ def quote_snapshot(symbol, proxy=None):
         else pd.read_csv(StringIO(response.json()["data"]))
     )
 
-
+## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
@@ -367,7 +367,7 @@ def list_contracts(symbol, start_date, print_url=False, proxy=None, **kwargs):
     data["strike"] = data.strike / 1000
     return data
 
-
+## Break away function to helpers
 def identify_length(string, integer, rt=False):
     """
 
@@ -396,14 +396,14 @@ def identify_length(string, integer, rt=False):
     ), f'Available timeframes are {TIMEFRAMES_VALUES.keys()}, recieved "{string}"'
     return integer * TIMEFRAMES_VALUES[string]
 
-
+## Break away function to helpers
 def extract_numeric_value(timeframe_str):
     match = re.findall(r"(\d+)([a-zA-Z]+)", timeframe_str)
     integers = [int(num) for num, _ in match][0]
     strings = [str(letter) for _, letter in match][0]
     return strings, integers
 
-
+## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
@@ -561,7 +561,7 @@ def retrieve_ohlc(
 
     return data
 
-
+## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
@@ -717,7 +717,7 @@ def retrieve_eod_ohlc(
 
     return data
 
-
+## Migrate to new API
 async def retrieve_eod_ohlc_async(
     symbol,
     end_date: str,
@@ -838,7 +838,7 @@ async def retrieve_eod_ohlc_async(
 
     return data
 
-
+## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
@@ -948,7 +948,7 @@ def retrieve_bulk_eod(
 
     return data
 
-
+## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
@@ -1077,7 +1077,7 @@ def retrieve_quote_rt(
 
     return data
 
-
+## Break away function to helpers
 def bootstrap_ohlc(data: pd.DataFrame, copy_column: str = "Midpoint"):
     """
     Format the OHLC data to have a consistent structure.
@@ -1102,7 +1102,7 @@ def bootstrap_ohlc(data: pd.DataFrame, copy_column: str = "Midpoint"):
 
     return data
 
-
+## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
@@ -1251,7 +1251,7 @@ def retrieve_quote(
     return resample(data, interval=interval)
     # return data
 
-
+## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
@@ -1371,7 +1371,7 @@ def retrieve_openInterest(
         raise e
     return data
 
-
+## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
@@ -1461,7 +1461,7 @@ def retrieve_bulk_open_interest(
         raise e
     return data
 
-
+## Migrate to new API
 async def retrieve_openInterest_async(
     symbol,
     end_date: str,
@@ -1537,7 +1537,7 @@ async def retrieve_openInterest_async(
     data.drop(columns=["Date2", "Date3", "Ms_of_day"], inplace=True)
     return data
 
-
+## Break away function to helpers
 def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
     """
     Resamples to a specific interval size
@@ -1650,7 +1650,7 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
             )()
         return enforce_bus_hours(data.fillna(0))
 
-
+## Break away function to helpers
 def _handle_multi_index_resample(
     data: pd.DataFrame,
     datetime_col_name: str,
@@ -1693,7 +1693,7 @@ def _handle_multi_index_resample(
     resampled_data = pd.concat(resampled_data_list, axis=0)
     return resampled_data
 
-
+## Break away function to helpers
 def convert_milliseconds(ms):
     hours = ms // 3600000
     ms = ms % 3600000
@@ -1703,7 +1703,7 @@ def convert_milliseconds(ms):
     milliseconds = ms % 1000
     return f"{hours:02}:{minutes:02}:{seconds:02}"
 
-
+## Break away function to helpers
 def convert_time_to_miliseconds(time):
     time_obj = pd.to_datetime(time)
     hour = time_obj.hour * 3_600_000
@@ -1712,7 +1712,7 @@ def convert_time_to_miliseconds(time):
     mili = time_obj.microsecond
     return hour + minute + secs + mili
 
-
+## Migrate to new API
 def retrieve_option_ohlc(
     symbol: str,
     exp: str,
@@ -1768,15 +1768,15 @@ def retrieve_option_ohlc(
     else:
         return response
 
-
+## Break away function to helpers
 def __isSuccesful(status_code: int):
     return status_code >= 200 and status_code < 300
 
-
+## Break away function to helpers
 def is_theta_data_retrieval_successful(response):
-    return type(response) != str
+    return not isinstance(response, str)
 
-
+## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
@@ -1897,7 +1897,7 @@ def retrieve_chain_bulk(
         data = data[columns]
     return data
 
-
+## Break away function to helpers
 def ping_proxy():
     try:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
