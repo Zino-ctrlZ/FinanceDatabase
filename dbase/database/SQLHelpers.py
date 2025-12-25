@@ -1,8 +1,15 @@
-import logging
-import sys, os
+import sys
+import os
 from dotenv import load_dotenv
+import pymysql
+import pandas as pd
+from mysql.connector import Error
+from datetime import datetime
+import mysql.connector
+import atexit
+import signal
+import re
 
-load_dotenv()
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import (
     create_engine,
@@ -19,24 +26,16 @@ from sqlalchemy import (
     DateTime,
     TIMESTAMP,
     PrimaryKeyConstraint,
+    text,
 )
-from sqlalchemy import create_engine, text
-import pymysql
-import pandas as pd
-from mysql.connector import Error
-import sys
-import pandas as pd
-from datetime import datetime
-from trade.helpers.helper import setup_logger, _ipython_shutdown
-from trade import register_signal
-import mysql.connector
-import os
-from functools import lru_cache
-from dotenv import load_dotenv
-import atexit
-import signal
+
+from dbase.database import Database
 from Database import clear_database_name_cache, get_database_name
-import re
+from trade.helpers.helper import setup_logger
+from trade import register_signal
+
+load_dotenv()
+
 
 load_dotenv()
 sql_pw = os.environ.get("MYSQL_PASSWORD")
@@ -72,7 +71,6 @@ mysql_to_python = {
     "json": "dict",
     "tinyint": "bool",
 }
-portfolio_data_db = "portfolio_data"
 
 # Module-level environment context (set by TFP-Algo)
 _ENVIRONMENT_CONTEXT = {"environment": None, "branch_name": None}
@@ -362,14 +360,34 @@ def query_database_as_dict(db, table_name, query):
         raise e
 
 
-def create_SQL_connection():
+def create_SQL_connection(database: str = None):
+    """
+    Create a MySQL connection.
+
+    Args:
+        database: Database name to connect to. If None, defaults to 'securities_master'.
+                 Will be resolved using environment-aware name resolution.
+
+    Returns:
+        MySQL connection object
+    """
+
+    # Use default if not provided
+    if database is None:
+        database = Database.SECURITIES_MASTER
+
+    # Resolve environment-aware database name
+    env = _ENVIRONMENT_CONTEXT.get("environment")
+    branch = _ENVIRONMENT_CONTEXT.get("branch_name")
+    resolved_db = get_database_name(database, environment=env, branch_name=branch)
+
     try:
         connection = mysql.connector.connect(
             # The IP address or domain name of your MySQL server (e.g., '192.168.1.100' or 'yourdomain.com')
             host=sql_host,
             # MySQL port number (typically 3306)
             port=sql_port,
-            database="securities_master",  # The name of the database you want to connect to
+            database=resolved_db,  # Use resolved database name
             user=sql_user,  # Your MySQL username
             password=sql_pw,  # Your MySQL password
         )
@@ -403,12 +421,31 @@ def create_SQL_database(connection, db_name):
 
 
 def get_table_schema(db_name, table_name) -> list[dict[str, str]]:
-    engine = get_engine("portfolio_data")
+    """
+    Get the schema for a table in a database.
+
+    Args:
+        db_name: Base database name (e.g., 'portfolio_data')
+        table_name: Name of the table
+
+    Returns:
+        List of dictionaries containing column information
+    """
+
+    # Resolve environment-aware database name
+    env = _ENVIRONMENT_CONTEXT.get("environment")
+    branch = _ENVIRONMENT_CONTEXT.get("branch_name")
+    resolved_db = get_database_name(db_name, environment=env, branch_name=branch)
+
+    # Use resolved database name for both engine and query
+    engine = get_engine(
+        db_name
+    )  # get_engine() also resolves, but we need resolved_db for the query
     engine.connect()
     query = text(f"""
             SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
             FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = '{db_name}' AND TABLE_NAME = '{table_name}';
+            WHERE TABLE_SCHEMA = '{resolved_db}' AND TABLE_NAME = '{table_name}';
         """)
     types = []
     try:
