@@ -16,8 +16,11 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from Database import Database
+from db_utils import Database
 from SQLHelpers import get_engine, sql_host, sql_user, sql_pw, sql_port
+from trade.helpers.helper import setup_logger
+
+db_management_logger = setup_logger("dbase.database.db_management")
 
 
 def validate_database_input(value: str) -> None:
@@ -143,7 +146,6 @@ def clone_database_schema(
     target_db: str,
     *,
     schema_only: bool = True,
-    include_routines: bool = True,
     include_triggers: bool = False,
     include_events: bool = False,
     strip_definers: bool = False,
@@ -270,7 +272,7 @@ def clone_database_schema(
         )
 
         # 4) Restore using mysql client (stdin). This is the robust path for routines/triggers/events.
-        # Use a temp file so the operator can optionally inspect it during debugging.
+        # Use a temp file to allow for deyb
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", delete=False, suffix=".sql"
         ) as tf:
@@ -299,11 +301,224 @@ def clone_database_schema(
     except Exception as e:
         raise RuntimeError(f"Error cloning database schema: {e}") from e
     finally:
-        # Remove temp file; comment out if you want to keep dumps for audit/debug.
+        # Remove temp file, commment out to retain for debugging
         try:
             tmp_path.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+def list_environments(exclude_prod: bool = True) -> list[str]:
+    """
+    List all unique environments from master_config.database_configs.
+
+    Args:
+        exclude_prod: If True, filters out 'prod' environment
+
+    Returns:
+        Sorted list of environment names
+    """
+    # Use parameterized query to prevent SQL injection
+    query = text("""
+        SELECT DISTINCT environment
+        FROM master_config.database_configs
+        WHERE is_active = TRUE
+    """)
+
+    engine = get_engine("master_config")
+    result = pd.read_sql(query, engine)
+
+    if result.empty:
+        return []
+
+    environments = result["environment"].tolist()
+
+    if exclude_prod:
+        environments = [env for env in environments if env != "prod"]
+
+    return sorted(environments)
+
+
+def delete_database(database_name: str) -> None:
+    """
+    Drop a single MySQL database using mysql command-line tool.
+
+    Args:
+        database_name: Name of the database to delete
+
+    Raises:
+        ValueError: If database name is invalid or in excluded list
+        RuntimeError: If mysql command fails
+    """
+    # Validate input
+    validate_database_input(database_name)
+
+    # Check that database is not in excluded list
+    if database_name in Database.EXCLUDED_DATABASES:
+        raise ValueError(f"Cannot delete protected database: {database_name}")
+
+    # Check for None values in SQL connection parameters
+    if not sql_host:
+        raise ValueError("MYSQL_HOST environment variable is not set")
+    if not sql_user:
+        raise ValueError("MYSQL_USER environment variable is not set")
+    if not sql_port:
+        raise ValueError("MYSQL_PORT environment variable is not set")
+
+    # Conservative name safety check
+    illegal = re.compile(r"[`\s;]")
+    if illegal.search(database_name):
+        raise ValueError(
+            "Database names may not contain spaces, backticks, or semicolons."
+        )
+
+    env = os.environ.copy()
+    # Avoid putting password into process args (visible in process list).
+    if sql_pw:
+        env["MYSQL_PWD"] = str(sql_pw)
+
+    # Drop database using mysql command-line tool
+    drop_sql = f"DROP DATABASE IF EXISTS `{database_name}`;"
+    try:
+        subprocess.run(
+            [
+                "mysql",
+                f"--host={sql_host}",
+                f"--port={sql_port}",
+                f"--user={sql_user}",
+                "-e",
+                drop_sql,
+            ],
+            check=True,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        error_msg = (
+            f"Failed to delete database '{database_name}' with exit code {e.returncode}"
+        )
+        if e.stderr:
+            error_msg += f"\nmysql error: {e.stderr}"
+        if e.stdout:
+            error_msg += f"\nmysql output: {e.stdout}"
+        raise RuntimeError(error_msg) from e
+
+
+def unregister_database(database_name: str) -> None:
+    """
+    Soft delete database entry from master_config.database_configs.
+
+    Sets is_active = FALSE rather than hard deleting for audit trail.
+    Handles case where database doesn't exist in config gracefully.
+
+    Args:
+        database_name: Name of the database to unregister
+    """
+    # Validate input
+    validate_database_input(database_name)
+
+    # Use parameterized query to prevent SQL injection
+    query = text("""
+        UPDATE master_config.database_configs
+        SET is_active = FALSE
+        WHERE database_name = :db_name
+    """)
+
+    engine = get_engine("master_config")
+    try:
+        with engine.begin() as conn:  # Automatic transaction handling
+            conn.execute(query, {"db_name": database_name})
+            # If no rows were updated, database doesn't exist in config - that's OK
+            # We just skip silently (orphaned database case)
+    except Exception as e:
+        # Log but don't fail - database might already be unregistered
+        # This is a soft failure case
+        db_management_logger.debug(
+            f"Failed to unregister database '{database_name}': {e}"
+        )
+
+
+def delete_environment(
+    environments: list[str], confirm: bool = False
+) -> dict[str, dict[str, str]]:
+    """
+    Delete all databases for one or more environments.
+
+    Args:
+        environments: List of environment names to delete
+        confirm: If False, prompts for confirmation. If True, skips confirmation.
+
+    Returns:
+        Nested dict: {environment: {base_name: database_name}} of deleted databases
+
+    Raises:
+        ValueError: If any environment is 'prod' or if user cancels deletion
+        RuntimeError: If database deletion fails (partial failures continue)
+    """
+    # Validate all environment names
+    for env in environments:
+        validate_database_input(env)
+
+    # Safety check: prod can never be deleted programmatically
+    if "prod" in environments:
+        raise ValueError(
+            "Production environment cannot be deleted programmatically. "
+            "Remove 'prod' from the environments list."
+        )
+
+    # Collect all databases across all environments
+    all_databases = {}
+    for env in environments:
+        dbs = get_databases_for_environment(env)
+        if dbs:
+            all_databases[env] = dbs
+
+    # If no databases found, return empty dict
+    if not all_databases:
+        return {}
+
+    # Confirmation flow (if confirm=False)
+    if not confirm:
+        # Display databases grouped by environment
+        db_management_logger.info("\nThe following databases will be deleted:")
+        db_management_logger.info("=" * 60)
+        for env, dbs in all_databases.items():
+            db_management_logger.info(f"\nEnvironment: {env}")
+            for base_name, db_name in dbs.items():
+                db_management_logger.info(f"  - {base_name} -> {db_name}")
+        db_management_logger.info("=" * 60)
+
+        # Prompt for confirmation
+        while True:
+            response = input("\nDelete these databases? (y/n): ").strip().lower()
+            if response in ("n", "no"):
+                raise ValueError("Deletion cancelled by user")
+            elif response in ("y", "yes"):
+                break
+            else:
+                print("Please enter 'y' or 'n'")
+
+    # Delete databases for each environment
+    deleted = {}
+    for env, dbs in all_databases.items():
+        deleted[env] = {}
+        for base_name, db_name in dbs.items():
+            try:
+                db_management_logger.info(f"Deleting database '{db_name}'")
+                # Delete MySQL database
+                delete_database(db_name)
+                # Unregister from config (soft delete)
+                unregister_database(db_name)
+                deleted[env][base_name] = db_name
+            except Exception as e:
+                # Continue on partial failures
+                db_management_logger.warning(
+                    f"Failed to delete database '{db_name}': {e}"
+                )
+                continue
+
+    return deleted
 
 
 def create_test_environment(
@@ -366,57 +581,116 @@ def create_test_environment(
 
 
 def __main__():
-    """CLI entry point for creating test environments."""
+    """CLI entry point for creating and deleting test environments."""
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Create a test environment by cloning prod schemas."
+        description="Manage test database environments: create or delete."
     )
-    parser.add_argument(
+
+    # Create subcommands
+    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+
+    # Create environment command
+    create_parser = subparsers.add_parser(
+        "create", help="Create a test environment by cloning prod schemas."
+    )
+    create_parser.add_argument(
         "--env",
         required=True,
         help="Target environment name (e.g., mean-reversion => test-mean-reversion).",
     )
-    parser.add_argument("--branch", required=True, help="Git branch name.")
-    parser.add_argument(
+    create_parser.add_argument("--branch", required=True, help="Git branch name.")
+    create_parser.add_argument(
         "--source-env",
         default="prod",
         help="Source environment to clone from (default: prod).",
     )
 
-    group = parser.add_mutually_exclusive_group()
+    group = create_parser.add_mutually_exclusive_group()
     group.add_argument(
         "--schema-only", action="store_true", help="Clone schema only (default)."
     )
     group.add_argument("--with-data", action="store_true", help="Clone schema + data.")
 
-    parser.add_argument(
+    create_parser.add_argument(
         "--exclude",
         action="append",
         default=[],
         help="Additional database base names to exclude (repeatable).",
     )
 
-    args = parser.parse_args()
-
-    # Default behavior: schema only unless --with-data is passed.
-    schema_only = True
-    if args.with_data:
-        schema_only = False
-    elif args.schema_only:
-        schema_only = True
-
-    created = create_test_environment(
-        environment=args.env,
-        branch_name=args.branch,
-        source_environment=args.source_env,
-        exclude_databases=args.exclude or None,
-        schema_only=schema_only,
+    # Delete environment command
+    delete_parser = subparsers.add_parser(
+        "delete", help="Delete one or more test environments."
+    )
+    delete_parser.add_argument(
+        "--delete-env",
+        nargs="+",
+        required=True,
+        help="Environment name(s) to delete (e.g., test-mean-reversion).",
+    )
+    delete_parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Skip confirmation prompt and proceed with deletion.",
     )
 
-    # Print in a deterministic / machine-readable way
-    for base_name, db_name in created.items():
-        print(f"{base_name} -> {db_name}")
+    args = parser.parse_args()
+
+    if args.command == "create":
+        # Default behavior: schema only unless --with-data is passed.
+        schema_only = True
+        if args.with_data:
+            schema_only = False
+        elif args.schema_only:
+            schema_only = True
+
+        created = create_test_environment(
+            environment=args.env,
+            branch_name=args.branch,
+            source_environment=args.source_env,
+            exclude_databases=args.exclude or None,
+            schema_only=schema_only,
+        )
+
+        # Print in a deterministic / machine-readable way
+        for base_name, db_name in created.items():
+            db_management_logger.info(f"{base_name} -> {db_name}")
+
+    elif args.command == "delete":
+        try:
+            deleted = delete_environment(
+                environments=args.delete_env, confirm=args.confirm
+            )
+
+            # Print results
+            if deleted:
+                db_management_logger.info("\nSuccessfully deleted databases:")
+                for env, dbs in deleted.items():
+                    db_management_logger.info(f"\nEnvironment: {env}")
+                    for base_name, db_name in dbs.items():
+                        db_management_logger.info(f"  - {base_name} -> {db_name}")
+            else:
+                db_management_logger.info("No databases found to delete.")
+        except ValueError as e:
+            db_management_logger.error(f"Error: {e}")
+            exit(1)
+        except Exception as e:
+            db_management_logger.error(f"Unexpected error: {e}", exc_info=True)
+            exit(1)
+
+    elif args.command == "list":
+        envs = list_environments(exclude_prod=True)
+        if envs:
+            db_management_logger.info("Available non-production environments:")
+            for env in envs:
+                db_management_logger.info(f"  - {env}")
+        else:
+            db_management_logger.info("No non-production environments found.")
+
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":

@@ -33,9 +33,11 @@ from .Database import (
     clear_database_name_cache,  # Cache management
 )
 
-# Import from SchemaCloning - schema cloning functions
+# Import from SchemaCloning - schema cloning and deletion functions
 from .SchemaCloning import (
     create_test_environment,  # Main function for creating test environments
+    delete_environment,  # Main function for deleting test environments
+    list_environments,  # List all non-production environments
 )
 
 __all__ = [
@@ -64,4 +66,6 @@ __all__ = [
     "clear_database_name_cache",
     # SchemaCloning exports
     "create_test_environment",
+    "delete_environment",
+    "list_environments",
 ]

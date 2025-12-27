@@ -29,8 +29,7 @@ from sqlalchemy import (
     text,
 )
 
-from dbase.database import Database
-from Database import clear_database_name_cache, get_database_name
+from db_utils import clear_database_name_cache, get_database_name, Database
 from trade.helpers.helper import setup_logger
 from trade import register_signal
 

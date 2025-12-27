@@ -119,6 +119,20 @@ Schema cloning functions for creating test database environments.
 - Uses mysqldump and mysql restore
 - Supports schema-only or full data cloning
 
+**`delete_environment(environments, confirm)`**
+
+- Main function for deleting test environments
+- Deletes all databases for one or more environments
+- Requires confirmation by default (unless `confirm=True`)
+- Production environments are protected and cannot be deleted programmatically
+- Returns nested dict: `{environment: {base_name: database_name}}`
+
+**`list_environments(exclude_prod)`**
+
+- Lists all unique environments from `master_config.database_configs`
+- By default excludes production environment
+- Returns sorted list of environment names
+
 ## Usage Examples
 
 ### Basic Usage with Environment-Aware Resolution
@@ -168,6 +182,32 @@ created = create_test_environment(
 # Returns: {'portfolio_data': 'portfolio_data_test-mean-reversion', ...}
 ```
 
+### Deleting Test Environments
+
+```python
+from dbase.database import delete_environment, list_environments
+
+# List available test environments
+envs = list_environments()
+print(envs)  # ['test', 'test-mean-reversion', 'test-arbitrage']
+
+# Delete single environment (shows databases, prompts for confirmation)
+deleted = delete_environment(['test-mean-reversion'], confirm=False)
+# Shows: "The following databases will be deleted: ..."
+# Prompts: "Delete these databases? (y/n): "
+# Returns: {'test-mean-reversion': {'portfolio_data': 'portfolio_data_test-mean-reversion', ...}}
+
+# Delete multiple environments (skips confirmation)
+deleted = delete_environment(['test-mean-reversion', 'test-arbitrage'], confirm=True)
+# Returns: {
+#   'test-mean-reversion': {'portfolio_data': 'portfolio_data_test-mean-reversion', ...},
+#   'test-arbitrage': {'portfolio_data': 'portfolio_data_test-arbitrage', ...}
+# }
+
+# Production protection: this will raise ValueError
+# delete_environment(['prod'])  # ERROR: Production cannot be deleted
+```
+
 ### Using Database Constants
 
 ```python
@@ -209,6 +249,66 @@ Resolved Name: 'portfolio_data_test-mean-reversion'
    - Register in `master_config.database_configs`
 3. Return mapping of created databases
 
+### Environment Deletion Process
+
+1. Validate all environment names (production protection)
+2. Collect all databases for each environment
+3. Display databases grouped by environment (if confirmation required)
+4. Prompt for user confirmation (`y/n`)
+5. For each database:
+   - Delete MySQL database using `DROP DATABASE IF EXISTS`
+   - Soft delete from `master_config.database_configs` (set `is_active = FALSE`)
+6. Return mapping of deleted databases
+
+## CLI Usage
+
+The `SchemaCloning.py` module provides a command-line interface for managing test environments:
+
+### Creating Test Environments
+
+```bash
+# Create a test environment
+python dbase/database/SchemaCloning.py create \
+    --env mean-reversion \
+    --branch feature-branch \
+    --schema-only
+
+# Create with data
+python dbase/database/SchemaCloning.py create \
+    --env mean-reversion \
+    --branch feature-branch \
+    --with-data
+```
+
+### Listing Environments
+
+```bash
+# List all non-production environments
+python dbase/database/SchemaCloning.py list
+```
+
+### Deleting Test Environments
+
+```bash
+# Delete single environment (shows databases, asks for confirmation)
+python dbase/database/SchemaCloning.py delete --delete-env test-mean-reversion
+
+# Delete multiple environments (shows all databases, asks for confirmation)
+python dbase/database/SchemaCloning.py delete \
+    --delete-env test-mean-reversion test-arbitrage
+
+# Delete without confirmation prompt
+python dbase/database/SchemaCloning.py delete \
+    --delete-env test-mean-reversion \
+    --confirm
+```
+
+**Safety Notes:**
+
+- Production environments (`prod`) cannot be deleted programmatically
+- Confirmation is required by default (use `--confirm` to skip)
+- Entering `'n'` cancels the entire operation - no databases are deleted
+
 ## Configuration
 
 ### Required Environment Variables
@@ -229,7 +329,9 @@ The `master_config` database and `database_configs` table must be created manual
 - **Test databases**: Use pattern `{base_name}_{environment}`
 - **master_config**: Special database that is never suffixed
 - **Caching**: Database name resolution is cached per environment/base_name combination
-- **Partial failures**: Schema cloning continues on partial failure (databases are independent)
+- **Partial failures**: Schema cloning and deletion continue on partial failure (databases are independent)
+- **Production protection**: Production environments cannot be deleted programmatically - this is hard-coded
+- **Soft delete**: Deleted databases are soft-deleted in `master_config.database_configs` (`is_active = FALSE`) for audit trail
 
 ## See Also
 
