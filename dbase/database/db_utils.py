@@ -47,7 +47,7 @@ def get_environment(branch_name: str = None, cli_arg: str = None) -> str:
     """
     # Priority: CLI arg > branch detection > env var > default
     if cli_arg:
-        return f"test-{cli_arg}"
+        return cli_arg
 
     if branch_name and branch_name != "main":
         return "test"
@@ -90,6 +90,7 @@ def get_database_name(
         db_name = base_name
     else:
         # Query master_config for test environment
+        print("ZINO-DEC21: _load_database_name_from_config: ", base_name, env)
         db_name = _load_database_name_from_config(base_name, env)
 
     # Cache and return

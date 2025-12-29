@@ -16,11 +16,13 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from db_utils import Database
-from SQLHelpers import get_engine, sql_host, sql_user, sql_pw, sql_port
+from .db_utils import Database
+from .SQLHelpers import get_engine, sql_host, sql_user, sql_pw, sql_port
 from trade.helpers.helper import setup_logger
 
-db_management_logger = setup_logger("dbase.database.db_management")
+db_management_logger = setup_logger(
+    "dbase.database.db_management", stream_log_level="INFO", file_log_level="DEBUG"
+)
 
 
 def validate_database_input(value: str) -> None:
@@ -114,16 +116,53 @@ def register_database(
     if branch_name:  # branch_name can be None
         validate_database_input(branch_name)
 
-    # Use parameterized query to prevent SQL injection
-    query = text("""
-        INSERT INTO master_config.database_configs 
-        (database_name, base_name, environment, branch_name, created_by)
-        VALUES (:database_name, :base_name, :environment, :branch_name, 'system')
-    """)
-
     engine = get_engine("master_config")
     try:
         with engine.begin() as conn:  # Automatic transaction handling
+            # Check if inactive entry exists
+            check_query = text("""
+                SELECT is_active FROM master_config.database_configs
+                WHERE database_name = :db_name
+            """)
+            existing = pd.read_sql(check_query, conn, params={"db_name": database_name})
+
+            if not existing.empty:
+                # Entry exists - reactivate it if inactive, or raise error if active
+                if existing.iloc[0]["is_active"]:
+                    raise ValueError(
+                        f"Database '{database_name}' already exists and is active"
+                    )
+                else:
+                    # Reactivate the existing entry
+                    update_query = text("""
+                        UPDATE master_config.database_configs
+                        SET is_active = TRUE,
+                            base_name = :base_name,
+                            environment = :environment,
+                            branch_name = :branch_name,
+                            created_by = 'system'
+                        WHERE database_name = :db_name
+                    """)
+                    conn.execute(
+                        update_query,
+                        {
+                            "db_name": database_name,
+                            "base_name": base_name,
+                            "environment": environment,
+                            "branch_name": branch_name,
+                        },
+                    )
+                    db_management_logger.info(
+                        f"Reactivated existing database entry '{database_name}'"
+                    )
+                    return
+
+            # No existing entry, insert new one
+            query = text("""
+                INSERT INTO master_config.database_configs 
+                (database_name, base_name, environment, branch_name, created_by)
+                VALUES (:database_name, :base_name, :environment, :branch_name, 'system')
+            """)
             conn.execute(
                 query,
                 {
@@ -134,7 +173,7 @@ def register_database(
                 },
             )
     except IntegrityError as e:
-        # Handle unique key constraint violation
+        # Handle unique key constraint violation (shouldn't happen with the check above, but just in case)
         raise ValueError(
             f"Failed to register database '{database_name}': database may already exist. "
             f"Original error: {e}"
@@ -348,7 +387,7 @@ def delete_database(database_name: str) -> None:
 
     Raises:
         ValueError: If database name is invalid or in excluded list
-        RuntimeError: If mysql command fails
+        RuntimeError: If mysql command fails or database still exists after deletion attempt
     """
     # Validate input
     validate_database_input(database_name)
@@ -377,6 +416,30 @@ def delete_database(database_name: str) -> None:
     if sql_pw:
         env["MYSQL_PWD"] = str(sql_pw)
 
+    # First, check if database exists
+    check_db_sql = f"SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '{database_name}';"
+    check_result = subprocess.run(
+        [
+            "mysql",
+            f"--host={sql_host}",
+            f"--port={sql_port}",
+            f"--user={sql_user}",
+            "-e",
+            check_db_sql,
+        ],
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    db_exists = database_name in check_result.stdout
+    if not db_exists:
+        db_management_logger.info(
+            f"Database '{database_name}' does not exist in MySQL, skipping deletion"
+        )
+        return  # Database doesn't exist, nothing to delete
+
     # Drop database using mysql command-line tool
     drop_sql = f"DROP DATABASE IF EXISTS `{database_name}`;"
     try:
@@ -403,6 +466,32 @@ def delete_database(database_name: str) -> None:
         if e.stdout:
             error_msg += f"\nmysql output: {e.stdout}"
         raise RuntimeError(error_msg) from e
+
+    # Verify database was actually deleted
+    verify_result = subprocess.run(
+        [
+            "mysql",
+            f"--host={sql_host}",
+            f"--port={sql_port}",
+            f"--user={sql_user}",
+            "-e",
+            check_db_sql,
+        ],
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    if database_name in verify_result.stdout:
+        # Database still exists after DROP command
+        raise RuntimeError(
+            f"Database '{database_name}' still exists after deletion attempt. "
+            f"This may be due to active connections or locks. "
+            f"Please check MySQL connections and try again."
+        )
+
+    db_management_logger.info(f"Successfully deleted database '{database_name}'")
 
 
 def unregister_database(database_name: str) -> None:

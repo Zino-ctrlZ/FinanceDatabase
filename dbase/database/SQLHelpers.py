@@ -29,7 +29,7 @@ from sqlalchemy import (
     text,
 )
 
-from db_utils import clear_database_name_cache, get_database_name, Database
+from .db_utils import clear_database_name_cache, get_database_name, Database
 from trade.helpers.helper import setup_logger
 from trade import register_signal
 
@@ -135,9 +135,10 @@ def get_engine(db_name):
         SQLAlchemy engine for the resolved database name
     """
     # Resolve environment-aware name
-    env = _ENVIRONMENT_CONTEXT.get("environment")
-    branch = _ENVIRONMENT_CONTEXT.get("branch_name")
-    resolved_name = get_database_name(db_name, environment=env, branch_name=branch)
+    # env = _ENVIRONMENT_CONTEXT.get("environment")
+    # branch = _ENVIRONMENT_CONTEXT.get("branch_name")
+    # resolved_name = get_database_name(db_name, environment=env, branch_name=branch)
+    resolved_name = db_name
 
     # Use existing caching logic with resolved name
     pid = os.getpid()
@@ -793,7 +794,9 @@ class DatabaseAdapter:
         # Resolve environment-aware database name
         env = _ENVIRONMENT_CONTEXT.get("environment")
         branch = _ENVIRONMENT_CONTEXT.get("branch_name")
+        print("ZINO-DEC21: query_database: ", db)
         resolved_db = get_database_name(db, environment=env, branch_name=branch)
+        print("ZINO-DEC21: query_database resolved_db: ", resolved_db)
 
         # Update query if it contains database references
         query = _rewrite_query_database_names(query, db, resolved_db)

@@ -26,7 +26,7 @@ from .SQLHelpers import (
 )
 
 # Import from Database - environment-aware name resolution
-from .Database import (
+from .db_utils import (
     Database,  # Database name constants
     get_database_name,  # Environment-aware database name resolution
     get_environment,  # Environment detection
@@ -34,7 +34,7 @@ from .Database import (
 )
 
 # Import from SchemaCloning - schema cloning and deletion functions
-from .SchemaCloning import (
+from .db_management import (
     create_test_environment,  # Main function for creating test environments
     delete_environment,  # Main function for deleting test environments
     list_environments,  # List all non-production environments
