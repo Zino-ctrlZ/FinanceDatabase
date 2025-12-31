@@ -90,7 +90,6 @@ def get_database_name(
         db_name = base_name
     else:
         # Query master_config for test environment
-        print("ZINO-DEC21: _load_database_name_from_config: ", base_name, env)
         db_name = _load_database_name_from_config(base_name, env)
 
     # Cache and return

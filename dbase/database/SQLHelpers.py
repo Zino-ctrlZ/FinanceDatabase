@@ -72,7 +72,7 @@ mysql_to_python = {
 }
 
 # Module-level environment context (set by TFP-Algo)
-_ENVIRONMENT_CONTEXT = {"environment": None, "branch_name": None}
+ENVIRONMENT_CONTEXT = {"environment": None, "branch_name": None}
 
 
 def set_environment_context(environment: str = None, branch_name: str = None):
@@ -91,11 +91,21 @@ def set_environment_context(environment: str = None, branch_name: str = None):
         When the environment context changes, the database name cache is cleared
         to ensure fresh resolution for the new environment.
     """
-    global _ENVIRONMENT_CONTEXT
-    _ENVIRONMENT_CONTEXT = {"environment": environment, "branch_name": branch_name}
+    global ENVIRONMENT_CONTEXT
+    # Update the existing dictionary instead of creating a new one
+    ENVIRONMENT_CONTEXT["environment"] = environment
+    ENVIRONMENT_CONTEXT["branch_name"] = branch_name
     # Clear cache when context changes
 
     clear_database_name_cache()
+
+
+def get_current_environment():
+    return ENVIRONMENT_CONTEXT.get("environment", "")
+
+
+def get_current_branch_name():
+    return ENVIRONMENT_CONTEXT.get("branch_name", "")
 
 
 def create_engine_short(db):
@@ -134,10 +144,6 @@ def get_engine(db_name):
     Returns:
         SQLAlchemy engine for the resolved database name
     """
-    # Resolve environment-aware name
-    # env = _ENVIRONMENT_CONTEXT.get("environment")
-    # branch = _ENVIRONMENT_CONTEXT.get("branch_name")
-    # resolved_name = get_database_name(db_name, environment=env, branch_name=branch)
     resolved_name = db_name
 
     # Use existing caching logic with resolved name
@@ -377,8 +383,8 @@ def create_SQL_connection(database: str = None):
         database = Database.SECURITIES_MASTER
 
     # Resolve environment-aware database name
-    env = _ENVIRONMENT_CONTEXT.get("environment")
-    branch = _ENVIRONMENT_CONTEXT.get("branch_name")
+    env = get_current_environment()
+    branch = get_current_branch_name()
     resolved_db = get_database_name(database, environment=env, branch_name=branch)
 
     try:
@@ -433,8 +439,8 @@ def get_table_schema(db_name, table_name) -> list[dict[str, str]]:
     """
 
     # Resolve environment-aware database name
-    env = _ENVIRONMENT_CONTEXT.get("environment")
-    branch = _ENVIRONMENT_CONTEXT.get("branch_name")
+    env = get_current_environment()
+    branch = get_current_branch_name()
     resolved_db = get_database_name(db_name, environment=env, branch_name=branch)
 
     # Use resolved database name for both engine and query
@@ -772,8 +778,8 @@ class DatabaseAdapter:
         - _raise: Whether to raise an exception if an error occurs (default is False).
         """
         # Resolve environment-aware database name
-        env = _ENVIRONMENT_CONTEXT.get("environment")
-        branch = _ENVIRONMENT_CONTEXT.get("branch_name")
+        env = get_current_environment()
+        branch = get_current_branch_name()
         resolved_db = get_database_name(db, environment=env, branch_name=branch)
 
         data = self.__filter_data(data) if filter_data else data
@@ -792,11 +798,9 @@ class DatabaseAdapter:
         - DataFrame containing the query result.
         """
         # Resolve environment-aware database name
-        env = _ENVIRONMENT_CONTEXT.get("environment")
-        branch = _ENVIRONMENT_CONTEXT.get("branch_name")
-        print("ZINO-DEC21: query_database: ", db)
+        env = get_current_environment()
+        branch = get_current_branch_name()
         resolved_db = get_database_name(db, environment=env, branch_name=branch)
-        print("ZINO-DEC21: query_database resolved_db: ", resolved_db)
 
         # Update query if it contains database references
         query = _rewrite_query_database_names(query, db, resolved_db)
