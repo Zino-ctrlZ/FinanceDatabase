@@ -4,7 +4,7 @@ from datetime import time as dtTime
 from trade import HOLIDAY_SET, PRICING_CONFIG
 
 
-def add_eod_timestamp(index):
+def add_eod_timestamp(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
     """
     Adds the EOD timestamp to the index
 
@@ -22,7 +22,7 @@ def add_eod_timestamp(index):
         return index
 
 
-def default_timestamp(index):
+def default_timestamp(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
     """
     Default timestamp to 00:00:00 if the index is a datetime object.
     """

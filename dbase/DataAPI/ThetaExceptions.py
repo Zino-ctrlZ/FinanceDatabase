@@ -1,79 +1,110 @@
-
 from trade.helpers.Logging import setup_logger
-logger = setup_logger('dbase.DataAPI.ThetaExceptions')
 
+logger = setup_logger("dbase.DataAPI.ThetaExceptions")
+
+class MissingColumnError(Exception):
+    """Exception raised when a required column is missing in the data."""
+
+    pass
 class ThetDataNoImplementation(Exception):
     """Exception raised when the data is not available/not implemented."""
+
     pass
+
 
 class ThetaDataOSLimit(Exception):
     """Exception raised when OS limits are reached.
     Best to retry again.
     """
+
     pass
+
 
 class ThetaDataGeneral(Exception):
     """General exception for ThetaData."""
+
     pass
+
 
 class ThetaDataPermission(Exception):
     """Permission error for ThetaData."""
+
     pass
+
 
 class ThetaDataNotFound(Exception):
     """Exception raised when the data is not found."""
+
     pass
+
 
 class ThetaDataInvalidParameter(Exception):
     """Exception raised when the parameter is invalid."""
+
     pass
+
 
 class ThetaDataDisconnected(Exception):
     """Exception raised when the data is disconnected."""
+
     pass
+
 
 class ThetaDataParseError(Exception):
     """Exception raised when there is a parsing error."""
+
     pass
+
 
 class ThetaDataWrongIP(Exception):
     """Exception raised when the IP address is wrong."""
+
     pass
+
 
 class ThetaDataNoPageFound(Exception):
     """Exception raised when the page is not found."""
+
     pass
+
 
 class ThetaDataLargeData(Exception):
     """Exception raised when the data is too large."""
+
     pass
+
 
 class ThetaDataServerRestart(Exception):
     """Exception raised when the server is restarting."""
+
     pass
+
 
 class ThetaDataUncaughtException(Exception):
     """Exception raised for uncaught errors."""
+
     pass
+
 
 class ThetaDataUnknownError(Exception):
     """Exception raised for unknown errors."""
+
     pass
 
 
-def raise_thetadata_exception(response, params = None, proxy = None):
+def raise_thetadata_exception(response, params=None, proxy=None):
     """
     Raise an exception if the response indicates an error.
     """
     if params is None:
         params = {}
-        
+
     if proxy is None:
         code = response.status_code
-        params['url'] = response.url
+        params["url"] = response.url
     else:
-        code = response.json()['status_code']
-        params['url'] = response.json()['url']
+        code = response.json()["status_code"]
+        params["url"] = response.json()["url"]
     if code == 404:
         raise ThetDataNoImplementation(f"The requested feature is not implemented. Parameters: {params}")
     elif code == 429:
@@ -103,25 +134,31 @@ def raise_thetadata_exception(response, params = None, proxy = None):
     elif code == 200:
         return
     else:
-        raise ThetaDataUnknownError(f"Unknown error occurred. Status code: {code}, Parameters: {params}")
-    
+        raise ThetaDataUnknownError(
+            f"Unknown error occurred. Status code: {code}, Message: `{response.text}`, Parameters: {params}"
+        )
+
+
 def is_thetadata_exception(e):
     """
     Check if the exception is a ThetaData exception.
     """
-    return isinstance(e, (
-        ThetDataNoImplementation,
-        ThetaDataOSLimit,
-        ThetaDataGeneral,
-        ThetaDataPermission,
-        ThetaDataNotFound,
-        ThetaDataInvalidParameter,
-        ThetaDataDisconnected,
-        ThetaDataParseError,
-        ThetaDataWrongIP,
-        ThetaDataNoPageFound,
-        ThetaDataLargeData,
-        ThetaDataServerRestart,
-        ThetaDataUncaughtException,
-        ThetaDataUnknownError
-    ))
+    return isinstance(
+        e,
+        (
+            ThetDataNoImplementation,
+            ThetaDataOSLimit,
+            ThetaDataGeneral,
+            ThetaDataPermission,
+            ThetaDataNotFound,
+            ThetaDataInvalidParameter,
+            ThetaDataDisconnected,
+            ThetaDataParseError,
+            ThetaDataWrongIP,
+            ThetaDataNoPageFound,
+            ThetaDataLargeData,
+            ThetaDataServerRestart,
+            ThetaDataUncaughtException,
+            ThetaDataUnknownError,
+        ),
+    )
