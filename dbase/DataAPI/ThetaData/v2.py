@@ -1,4 +1,204 @@
-import os
+"""
+ThetaData API V2 Client Module (Legacy)
+========================================
+
+This module provides a Python interface to ThetaData's V2 REST API for accessing
+historical and real-time options market data. This is the legacy API that predates V3.
+
+DEPRECATION NOTICE
+----------------------
+This V2 API is maintained for backward compatibility. New code should use the V3 API
+(dbase.DataAPI._ThetaData.v3) which offers improved performance, better error handling,
+and more consistent data structures.
+
+Overview
+--------
+This module provides comprehensive access to ThetaData's options market data including:
+    - End-of-day (EOD) OHLC data for individual contracts and bulk chains
+    - Intraday OHLC data with customizable intervals
+    - Historical and realtime quote data with bid/ask spreads
+    - Open interest data (historical and bulk snapshots)
+    - Option chain snapshots at specific times
+    - Contract listings for available options
+    - Greeks snapshots (delta, gamma, theta, vega, rho)
+
+Key Features
+------------
+- Automatic retry logic with exponential backoff for API failures
+- Ticker symbol change handling for corporate actions (FB → META, etc.)
+- Proxy support for distributed data fetching
+- Automatic data resampling to requested intervals
+- Business hours enforcement for intraday data
+- Comprehensive error handling and logging
+- Support for both synchronous and async operations (select functions)
+
+Architecture
+------------
+Functions follow a naming convention:
+    - retrieve_* : Core data retrieval functions
+    - retrieve_*_async : Async versions of select functions
+    - list_* : Functions for listing available contracts
+    - *_snapshot : Realtime snapshot functions for current market data
+
+Data Types
+----------
+EOD (End of Day):
+    - retrieve_eod_ohlc() - Single contract EOD OHLC
+    - retrieve_eod_ohlc_async() - Async version
+    - retrieve_bulk_eod() - All contracts for an expiration
+
+Intraday:
+    - retrieve_ohlc() - Intraday OHLC with custom intervals
+    - retrieve_quote() - Intraday quote data (bid/ask/midpoint)
+    - retrieve_quote_rt() - Realtime quote snapshot
+
+Open Interest:
+    - retrieve_openInterest() - Historical OI for single contract
+    - retrieve_openInterest_async() - Async version
+    - retrieve_bulk_open_interest() - Bulk OI for all contracts
+
+Chain/Contracts:
+    - retrieve_chain_bulk() - Complete chain snapshot at specific time
+    - list_contracts() - List available contracts for a date
+
+Snapshots:
+    - greek_snapshot() - Current greeks for all contracts
+    - ohlc_snapshot() - Current OHLC for all contracts
+    - quote_snapshot() - Current quotes for all contracts
+    - open_interest_snapshot() - Current OI for all contracts
+
+Ticker Change Handling
+----------------------
+The module automatically handles ticker symbol changes due to corporate actions.
+When querying historical data for symbols like META (formerly FB):
+    1. Detects ticker change events from TICK_CHANGE_ALIAS mapping
+    2. Splits queries across change date (queries FB before 2022-06-09, META after)
+    3. Combines results seamlessly into single DataFrame
+    4. Removes duplicate records at transition points
+
+This is handled transparently via resolve_ticker_history() wrapper function.
+
+Usage Examples
+--------------
+```python
+from dbase.DataAPI._ThetaData import v2
+
+# Get EOD data for a single option contract
+data = v2.retrieve_eod_ohlc(
+    symbol='AAPL',
+    exp='2024-12-20',
+    right='C',
+    strike=180.0,
+    start_date='2024-01-01',
+    end_date='2024-12-31'
+)
+
+# Get bulk EOD data for all strikes/rights in an expiration
+bulk = v2.retrieve_bulk_eod(
+    symbol='AAPL',
+    exp='2024-12-20',
+    start_date='2024-01-01',
+    end_date='2024-12-31'
+)
+
+# Get intraday quotes with 5-minute intervals
+quotes = v2.retrieve_quote(
+    symbol='AAPL',
+    exp='2024-12-20',
+    right='C',
+    strike=180.0,
+    start_date='2024-12-01',
+    end_date='2024-12-15',
+    interval='5m'
+)
+
+# List all available contracts for a date
+contracts = v2.list_contracts(
+    symbol='AAPL',
+    start_date='2024-01-15'
+)
+
+# Get realtime quote snapshot
+snapshot = v2.retrieve_quote_rt(
+    symbol='AAPL',
+    exp='2024-12-20',
+    right='C',
+    strike=180.0
+)
+```
+
+Proxy Support
+-------------
+All functions support proxying requests through a remote server:
+
+```python
+data = v2.retrieve_eod_ohlc(
+    symbol='AAPL',
+    exp='2024-12-20',
+    right='C',
+    strike=180.0,
+    start_date='2024-01-01',
+    end_date='2024-12-31',
+    proxy='http://remote-server:8080/thetadata'
+)
+```
+
+Error Handling
+--------------
+The module uses custom exceptions from ThetaExceptions:
+    - ThetaDataNotFound: No data available for request
+    - ThetaDataOSLimit: Rate limit exceeded
+    - ThetaDataDisconnected: Connection lost to ThetaData Terminal
+    - ThetaDataServerRestart: Server restarted during request
+    - ThetaDataParseError: API returned malformed data
+
+Functions with @backoff decorators automatically retry on transient errors:
+    - Exponential backoff between retries
+    - Maximum 5 retry attempts
+    - Logs retry attempts for debugging
+
+Data Format
+-----------
+All functions return pandas DataFrames with:
+    - DatetimeIndex named 'Datetime'
+    - Standardized column names (capitalized)
+    - OHLC columns: Open, High, Low, Close, Volume
+    - Quote columns: CloseBid, CloseAsk, Bid_size, Ask_size, Midpoint, Weighted_midpoint
+    - Timestamps adjusted to business hours (9:30 AM - 4:00 PM ET)
+
+Performance Considerations
+--------------------------
+- Bulk functions are more efficient than individual queries when retrieving multiple contracts
+- Intraday queries are slower than EOD due to larger data volumes
+- Use resampling functions to aggregate high-frequency data
+- Enable proxy for distributed fetching in production environments
+- Consider async versions for concurrent multi-contract queries
+
+Notes
+-----
+- Requires ThetaData Terminal running locally (default port 25510)
+- Strike prices must be provided as floats (e.g., 180.0, not 180000)
+- Dates accept 'YYYY-MM-DD' format strings or pandas Timestamps
+- Option rights: 'C' for calls, 'P' for puts (case-insensitive in API)
+- Intervals: '1m', '5m', '15m', '30m', '1h', '1d' (intraday functions)
+
+Migration to V3
+---------------
+When migrating to V3, key differences to note:
+1. V3 uses port 25503 instead of 25510
+2. V3 has native multi-threaded range fetching
+3. V3 standardizes all datetime handling
+4. V3 removes legacy formatting quirks
+5. V3 has improved error messages
+
+See Also
+--------
+- V3 API (recommended): dbase.DataAPI._ThetaData.v3
+- ThetaData API Docs: https://http-docs.thetadata.us/
+- Custom Exceptions: dbase.DataAPI.ThetaExceptions
+- Utility Functions: dbase.DataAPI._ThetaData.utils
+"""
+
 from trade.helpers.Logging import setup_logger
 
 import requests
@@ -12,7 +212,7 @@ from dbase.utils import add_eod_timestamp, enforce_bus_hours, PRICING_CONFIG
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS
 from trade.helpers.helper import compare_dates, generate_option_tick
 from copy import deepcopy
-from .ThetaExceptions import (
+from ..ThetaExceptions import (
     ThetaDataNotFound,
     ThetaDataOSLimit,
     ThetaDataDisconnected,
@@ -20,62 +220,13 @@ from .ThetaExceptions import (
     ThetaDataParseError,
     raise_thetadata_exception,
 )
+from .proxy import get_proxy_url, schedule_kwargs, get_should_schedule
 
 import backoff
 
-
-##To-Do: Add a data cleaning function to remove zeros and inf and check for other anomalies.
-## In the function, add a logger to log the anomalies
-"""
-This Module is responsible for organizing all functions related to accessing data from ThetaData Vendor
-
-"""
-
-_SHOULD_SCHEDULE = True
-proxy_url = None  ## Initial initiation
-
-
-def set_should_schedule(should_schedule):
-    print(f"Setting should_schedule to {should_schedule}")
-    global _SHOULD_SCHEDULE
-    _SHOULD_SCHEDULE = should_schedule
-
-
-def get_should_schedule():
-    return _SHOULD_SCHEDULE
-
-
-def schedule_kwargs(kwargs):
-    from module_test.raw_code.DataManagers.SaveManager import SaveManager
-
-    SaveManager.schedule(kwargs=kwargs)
-
-
 logger = setup_logger("dbase.DataAPI.ThetaData")
 duplicated_logger = setup_logger("dbase.DataAPI.ThetaData.duplicated")
-
-
-def get_proxy_url():
-    return os.environ.get("PROXY_URL") if os.environ.get("PROXY_URL") else None
-
-
-def refresh_proxy_url():
-    global proxy_url
-    proxy_url = get_proxy_url()
-
-
-refresh_proxy_url()  ## Refreshomh proxy url
-
-if get_proxy_url() is None:
-    print("No Proxy URL found. ThetaData API will default to direct access")
-else:
-    print(f"Using Proxy URL: {get_proxy_url()}")
-
-EMPTY_DF_SAMPLES = {
-    "retrieve_openInterest": pd.DataFrame(
-        columns=["Open_interest", "Date", "time", "Datetime"]
-    )
-}
+EMPTY_DF_SAMPLES = {"retrieve_openInterest": pd.DataFrame(columns=["Open_interest", "Date", "time", "Datetime"])}
 
 
 def quote_to_eod_patch(
@@ -86,6 +237,9 @@ def quote_to_eod_patch(
     start_date: str,
     strike: float,
     print_url=False,
+    *,
+    quote_func=None,
+    **kwargs,
 ) -> pd.DataFrame:
     """
     Retrieve end-of-day quote data for a specific option contract.
@@ -112,13 +266,16 @@ def quote_to_eod_patch(
     pd.DataFrame
         A DataFrame containing the end-of-day quote data for the specified option contract.
     """
-    q = retrieve_quote(
-        symbol,
-        end_date,
-        exp,
-        right,
-        start_date,
-        strike,
+    if quote_func is None:
+        quote_func = retrieve_quote
+
+    q = quote_func(
+        symbol=symbol,
+        end_date=end_date,
+        exp=exp,
+        right=right,
+        start_date=start_date,
+        strike=strike,
         print_url=print_url,
         interval="1d",
     )
@@ -182,20 +339,14 @@ def resolve_ticker_history(kwargs, _callable, _type="historical"):
         try:
             old_tick_data = (
                 _callable(**old_tick_kwargs)
-                if compare_dates.is_before(
-                    pd.Timestamp(kwargs["start_date"]), pd.Timestamp(change_date)
-                )
+                if compare_dates.is_before(pd.Timestamp(kwargs["start_date"]), pd.Timestamp(change_date))
                 else None
             )
             old_tick_data = (
-                old_tick_data[old_tick_data.index.duplicated(keep="first")]
-                if old_tick_data is not None
-                else None
+                old_tick_data[old_tick_data.index.duplicated(keep="first")] if old_tick_data is not None else None
             )
         except ThetaDataNotFound as e:
-            logger.info(
-                f'No data found for Old_tick {old_tick} on {kwargs["start_date"]}'
-            )
+            logger.info(f"No data found for Old_tick {old_tick} on {kwargs['start_date']}")
             logger.info(f"Error: {e}")
             old_tick_data = None
 
@@ -203,18 +354,14 @@ def resolve_ticker_history(kwargs, _callable, _type="historical"):
         try:
             new_tick_data = (
                 _callable(**new_tick_kwargs)
-                if compare_dates.is_on_or_after(
-                    pd.Timestamp(kwargs["exp"]), pd.Timestamp(change_date)
-                )
+                if compare_dates.is_on_or_after(pd.Timestamp(kwargs["exp"]), pd.Timestamp(change_date))
                 else None
             )  ## Opting for expiration date instead of end date cause data cannot go beyond expiration date
             new_tick_data = (
-                new_tick_data[~new_tick_data.index.duplicated(keep="first")]
-                if new_tick_data is not None
-                else None
+                new_tick_data[~new_tick_data.index.duplicated(keep="first")] if new_tick_data is not None else None
             )
         except ThetaDataNotFound as e:
-            logger.info(f'No data found for new_tick {new_tick} on {kwargs["exp"]}')
+            logger.info(f"No data found for new_tick {new_tick} on {kwargs['exp']}")
             logger.info(f"Error: {e}")
             new_tick_data = None
 
@@ -235,9 +382,7 @@ def resolve_ticker_history(kwargs, _callable, _type="historical"):
         new_tick_kwargs = deepcopy(kwargs)
         new_tick_kwargs["symbol"] = (
             old_tick
-            if compare_dates.is_before(
-                pd.Timestamp(kwargs["start_date"]), pd.Timestamp(change_date)
-            )
+            if compare_dates.is_before(pd.Timestamp(kwargs["start_date"]), pd.Timestamp(change_date))
             else new_tick
         )
         return _callable(**new_tick_kwargs)
@@ -256,6 +401,7 @@ def request_from_proxy(thetaUrl, queryparam, instanceUrl, print_url=False):
     response = requests.request("POST", instanceUrl, headers=headers, data=payload)
     return response
 
+
 ## Migrate to new API
 def greek_snapshot(symbol, proxy=None):
     if not proxy:
@@ -267,11 +413,8 @@ def greek_snapshot(symbol, proxy=None):
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
-    return (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+
 
 ## Migrate to new API
 def ohlc_snapshot(symbol, proxy=None):
@@ -284,11 +427,8 @@ def ohlc_snapshot(symbol, proxy=None):
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
-    return (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+
 
 ## Migrate to new API
 def open_interest_snapshot(symbol, proxy=None):
@@ -301,11 +441,8 @@ def open_interest_snapshot(symbol, proxy=None):
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
-    return (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+
 
 ## Migrate to new API
 def quote_snapshot(symbol, proxy=None):
@@ -318,11 +455,8 @@ def quote_snapshot(symbol, proxy=None):
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
-    return (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+
 
 ## Migrate to new API
 @backoff.on_exception(
@@ -354,11 +488,7 @@ def list_contracts(symbol, start_date, print_url=False, proxy=None, **kwargs):
         raise_thetadata_exception(response, querystring, proxy)
         print(response.url) if print_url else None
 
-    data = (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
     if data.shape[0] == 0:
         logger.error(f"No contracts found for {symbol} on {start_date}")
         logger.error(f"response: {response.text}")
@@ -366,6 +496,7 @@ def list_contracts(symbol, start_date, print_url=False, proxy=None, **kwargs):
         return
     data["strike"] = data.strike / 1000
     return data
+
 
 ## Break away function to helpers
 def identify_length(string, integer, rt=False):
@@ -396,6 +527,7 @@ def identify_length(string, integer, rt=False):
     ), f'Available timeframes are {TIMEFRAMES_VALUES.keys()}, recieved "{string}"'
     return integer * TIMEFRAMES_VALUES[string]
 
+
 ## Break away function to helpers
 def extract_numeric_value(timeframe_str):
     match = re.findall(r"(\d+)([a-zA-Z]+)", timeframe_str)
@@ -403,13 +535,14 @@ def extract_numeric_value(timeframe_str):
     strings = [str(letter) for _, letter in match][0]
     return strings, integers
 
+
 ## Migrate to new API
-@backoff.on_exception(
-    backoff.expo,
-    (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
-    max_tries=5,
-    logger=logger,
-)
+# @backoff.on_exception(
+#     backoff.expo,
+#     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
+#     max_tries=5,
+#     logger=logger,
+# )
 def retrieve_ohlc(
     symbol,
     end_date: str,
@@ -428,9 +561,7 @@ def retrieve_ohlc(
 
     if not proxy:
         proxy = get_proxy_url()
-    assert isinstance(
-        strike, float
-    ), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
     interval = PRICING_CONFIG["INTRADAY_AGG"]
     strike_og, start_og, end_og, exp_og, start_time_og = (
         strike,
@@ -479,11 +610,7 @@ def retrieve_ohlc(
         logger.info(f"Response time: {end_timer - start_timer}")
         logger.info(f"Response URL: {response.url}")
 
-    data = (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_ohlc")
@@ -518,26 +645,24 @@ def retrieve_ohlc(
                 strike_og,
                 start_time=start_time_og,
             )
-
         ## Merging data into quote data, because quote data has complete dates, whereas OHLC only has dates when traded
         quote_data = quote_data[
             [
                 "Date",
                 "time",
                 "Ask_size",
-                "Ask",
-                "Bid",
+                "Closeask",
+                "Closebid",
                 "Bid_size",
                 "Weighted_midpoint",
                 "Midpoint",
             ]
         ]
+        
         data = quote_data.merge(data, on=["Date", "time"], how="left")
-        data.rename(columns={"Ask": "CloseAsk", "Bid": "CloseBid"}, inplace=True)
+        data.rename(columns={"Closeask": "CloseAsk", "Closebid": "CloseBid"}, inplace=True)
         data["Date"] = data["Date"].astype(str) + " " + data["time"]
-        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
-            lambda x: x.strftime("%Y-%m-%d %H:%M:%S")
-        )
+        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d %H:%M:%S"))
         data["Date3"] = data.Date2
         data["datetime"] = pd.to_datetime(data.Date3)
         data.set_index("datetime", inplace=True)
@@ -561,6 +686,7 @@ def retrieve_ohlc(
 
     return data
 
+
 ## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
@@ -583,9 +709,7 @@ def retrieve_eod_ohlc(
     """
     Interval size in miliseconds. 1 minute is 6000
     """
-    assert isinstance(
-        strike, float
-    ), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
     if not proxy:
         proxy = get_proxy_url()
     ## Scheduling to update to database
@@ -615,9 +739,7 @@ def retrieve_eod_ohlc(
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(
-            pass_kwargs, retrieve_eod_ohlc, _type="historical"
-        )
+        return resolve_ticker_history(pass_kwargs, retrieve_eod_ohlc, _type="historical")
     end_date_int = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
     exp_int = int(pd.to_datetime(exp).strftime("%Y%m%d"))
     start_date_int = int(pd.to_datetime(start_date).strftime("%Y%m%d"))
@@ -668,11 +790,7 @@ def retrieve_eod_ohlc(
         logger.info(f"Response time: {end_timer - start_timer}")
         logger.info(f"Response URL: {response.url}")
 
-    data = (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_eod_ohlc")
@@ -683,17 +801,13 @@ def retrieve_eod_ohlc(
     else:
         data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
         data["weighted_midpoint"] = (
-            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
-            * (data["ask"])
-        ) + (
-            (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
-            * (data["bid"])
-        )
+            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
+        ) + ((data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"]))
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
 
         data["time"] = "16:00:00" if rt else ""
         data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
-            lambda x: x.strftime(f'%Y-%m-%d {PRICING_CONFIG["MARKET_CLOSE_TIME"]}')
+            lambda x: x.strftime(f"%Y-%m-%d {PRICING_CONFIG['MARKET_CLOSE_TIME']}")
         )
         data["Date3"] = data.Date2
         data["datetime"] = pd.to_datetime(data.Date3)
@@ -717,6 +831,7 @@ def retrieve_eod_ohlc(
 
     return data
 
+
 ## Migrate to new API
 async def retrieve_eod_ohlc_async(
     symbol,
@@ -733,9 +848,7 @@ async def retrieve_eod_ohlc_async(
     """
     Interval size in miliseconds. 1 minute is 6000
     """
-    assert isinstance(
-        strike, float
-    ), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
     if not proxy:
         proxy = get_proxy_url()
     pass_kwargs = {
@@ -749,9 +862,7 @@ async def retrieve_eod_ohlc_async(
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(
-            pass_kwargs, retrieve_eod_ohlc_async, _type="historical"
-        )
+        return resolve_ticker_history(pass_kwargs, retrieve_eod_ohlc_async, _type="historical")
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))
     start_date = int(pd.to_datetime(start_date).strftime("%Y%m%d"))
@@ -788,11 +899,7 @@ async def retrieve_eod_ohlc_async(
         logger.info(f"Response URL: {response.url}")
 
     print(response.url) if print_url else None
-    data = (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_eod_ohlc")
@@ -803,18 +910,12 @@ async def retrieve_eod_ohlc_async(
     else:
         data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
         data["weighted_midpoint"] = (
-            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
-            * (data["ask"])
-        ) + (
-            (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
-            * (data["bid"])
-        )
+            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
+        ) + ((data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"]))
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
 
         data["time"] = "16:00:00" if rt else ""
-        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
-            lambda x: x.strftime("%Y-%m-%d")
-        )
+        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d"))
         data["Date3"] = data.Date2
         data["datetime"] = pd.to_datetime(data.Date3)
         data["datetime"].hour = 16
@@ -838,6 +939,7 @@ async def retrieve_eod_ohlc_async(
 
     return data
 
+
 ## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
@@ -845,9 +947,7 @@ async def retrieve_eod_ohlc_async(
     max_tries=5,
     logger=logger,
 )
-def retrieve_bulk_eod(
-    symbol, exp, start_date, end_date, proxy=None, print_url=False, **kwargs
-):
+def retrieve_bulk_eod(symbol, exp, start_date, end_date, proxy=None, print_url=False, **kwargs):
     if not proxy:
         proxy = get_proxy_url()
 
@@ -861,9 +961,7 @@ def retrieve_bulk_eod(
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(
-            pass_kwargs, retrieve_bulk_eod, _type="historical"
-        )
+        return resolve_ticker_history(pass_kwargs, retrieve_bulk_eod, _type="historical")
 
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))
@@ -882,11 +980,11 @@ def retrieve_bulk_eod(
     if proxy:
         response = request_from_proxy(url, querystring, proxy, print_url)
         response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}"
-        print(response_url) if print_url else None
         raise_thetadata_exception(response, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
         raise_thetadata_exception(response, querystring, proxy)
+        print(response.url) if print_url else None
 
     end_timer = time.time()
     if (end_timer - start_timer) > 4:
@@ -895,11 +993,7 @@ def retrieve_bulk_eod(
         logger.info(f"Response time: {end_timer - start_timer}")
         logger.info(f"Response URL: {response.url}")
 
-    data = (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_bulk_eod")
@@ -909,16 +1003,12 @@ def retrieve_bulk_eod(
     else:
         data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
         data["weighted_midpoint"] = (
-            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
-            * (data["ask"])
-        ) + (
-            (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
-            * (data["bid"])
-        )
+            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
+        ) + ((data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"]))
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
 
         data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
-            lambda x: x.strftime(f'%Y-%m-%d {PRICING_CONFIG["MARKET_CLOSE_TIME"]}')
+            lambda x: x.strftime(f"%Y-%m-%d {PRICING_CONFIG['MARKET_CLOSE_TIME']}")
         )
         data["Date3"] = data.Date2
         data["datetime"] = pd.to_datetime(data.Date3)
@@ -948,6 +1038,7 @@ def retrieve_bulk_eod(
 
     return data
 
+
 ## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
@@ -976,9 +1067,7 @@ def retrieve_quote_rt(
     if not proxy:
         proxy = get_proxy_url()
     interval = "1h"
-    assert isinstance(
-        strike, float
-    ), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
     pass_kwargs = {
         "symbol": symbol,
         "end_date": end_date,
@@ -997,9 +1086,7 @@ def retrieve_quote_rt(
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
 
-        return resolve_ticker_history(
-            pass_kwargs, retrieve_quote_rt, _type="historical"
-        )
+        return resolve_ticker_history(pass_kwargs, retrieve_quote_rt, _type="historical")
     end_date = int(datetime.now().strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))
     ivl = identify_length(*extract_numeric_value(interval), rt=True) * 60000
@@ -1008,11 +1095,7 @@ def retrieve_quote_rt(
     strike = int(strike)
     start_time = str(convert_time_to_miliseconds(start_time))
     end_time = str(convert_time_to_miliseconds(end_time))
-    url = (
-        "http://127.0.0.1:25510/v2/snapshot/option/quote"
-        if not ts
-        else "http://127.0.0.1:25510/v2/hist/option/quote"
-    )
+    url = "http://127.0.0.1:25510/v2/snapshot/option/quote" if not ts else "http://127.0.0.1:25510/v2/hist/option/quote"
     querystring = {
         "end_date": end_date,
         "root": symbol,
@@ -1046,11 +1129,7 @@ def retrieve_quote_rt(
         logger.info(f"Response URL: {response.url}")
 
     print(response.url) if print_url else None
-    data = (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_quote_rt")
@@ -1059,12 +1138,8 @@ def retrieve_quote_rt(
     else:
         data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
         data["weighted_midpoint"] = (
-            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
-            * (data["ask"])
-        ) + (
-            (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
-            * (data["bid"])
-        )
+            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
+        ) + ((data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"]))
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
         data["time"] = data["Ms_of_day"].apply(lambda c: convert_milliseconds(c))
         data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
@@ -1076,6 +1151,7 @@ def retrieve_quote_rt(
         data.drop(columns=["Date2", "Date3", "Ms_of_day", "time", "Date"], inplace=True)
 
     return data
+
 
 ## Break away function to helpers
 def bootstrap_ohlc(data: pd.DataFrame, copy_column: str = "Midpoint"):
@@ -1101,6 +1177,7 @@ def bootstrap_ohlc(data: pd.DataFrame, copy_column: str = "Midpoint"):
             data[col.capitalize()] = data[copy_column]
 
     return data
+
 
 ## Migrate to new API
 @backoff.on_exception(
@@ -1128,9 +1205,7 @@ def retrieve_quote(
     Interval size in miliseconds. 1 minute is 6000
     """
 
-    assert isinstance(
-        strike, float
-    ), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
 
     ##FIXME: ONE Time fix. We use 9:45 for start_time when bootstrapping ohlc to ensure there is data for open
     if start_time is None:
@@ -1207,32 +1282,22 @@ def retrieve_quote(
         logger.info(f"Response time: {end_timer - start_timer}")
         logger.info(f"Response URL: {response.url}")
 
-    data = (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_quote function")
         logger.error(f"Following error for: {locals()}")
-        logger.error(
-            f"EOD OHLC mismatching dataframe size. Response: {data.columns[0]}"
-        )
-        logger.error(f"No data returned at all")
+        logger.error(f"EOD OHLC mismatching dataframe size. Response: {data.columns[0]}")
+        logger.error("No data returned at all")
         logger.info(f"Kwargs: {locals()}")
         return
     data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
-    data["weighted_midpoint"] = (
-        (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
-    ) + (
+    data["weighted_midpoint"] = ((data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])) + (
         (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"])
     )
     data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
     data["time"] = data["Ms_of_day"].apply(lambda c: convert_milliseconds(c))
-    data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
-        lambda x: x.strftime("%Y-%m-%d")
-    )
+    data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d"))
     data["Date3"] = data.Date2 + " " + data.time
     data["datetime"] = pd.to_datetime(data.Date3)
     data.set_index("datetime", inplace=True)
@@ -1250,6 +1315,7 @@ def retrieve_quote(
 
     return resample(data, interval=interval)
     # return data
+
 
 ## Migrate to new API
 @backoff.on_exception(
@@ -1272,9 +1338,7 @@ def retrieve_openInterest(
     """
     Interval size in miliseconds. 1 minute is 6000
     """
-    assert isinstance(
-        strike, float
-    ), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
     pass_kwargs = {
         "symbol": symbol,
         "end_date": end_date,
@@ -1289,9 +1353,7 @@ def retrieve_openInterest(
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(
-            pass_kwargs, retrieve_openInterest, _type="historical"
-        )
+        return resolve_ticker_history(pass_kwargs, retrieve_openInterest, _type="historical")
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))
     start_date = int(pd.to_datetime(start_date).strftime("%Y%m%d"))
@@ -1331,7 +1393,7 @@ def retrieve_openInterest(
 
     if not __isSuccesful(response.status_code):
         logger.error("")
-        logger.error(f"Error in retrieve_openInterest")
+        logger.error("Error in retrieve_openInterest")
         logger.error(f"Following error for: {locals()}")
         logger.error(f"Error in retrieving data: {response.text}")
         logger.error("Nothing returned at all")
@@ -1340,25 +1402,19 @@ def retrieve_openInterest(
 
     try:
         print(response.url) if print_url else None
-        data = (
-            pd.read_csv(StringIO(response.text))
-            if proxy is None
-            else pd.read_csv(StringIO(response.json()["data"]))
-        )
+        data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
 
         data["time"] = data["Ms_of_day"].apply(convert_milliseconds)
         data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
-            lambda x: x.strftime(f'%Y-%m-%d {PRICING_CONFIG["MARKET_CLOSE_TIME"]}')
+            lambda x: x.strftime(f"%Y-%m-%d {PRICING_CONFIG['MARKET_CLOSE_TIME']}")
         )
         data["Date3"] = data.Date2
         data["Datetime"] = pd.to_datetime(data.Date3)
         data.drop(columns=["Date2", "Date3", "Ms_of_day"], inplace=True)
 
         if data.Datetime.duplicated().any():
-            duplicated_logger.info(
-                f"Duplicated index found for {symbol}, {exp}, {right}, {strike}"
-            )
+            duplicated_logger.info(f"Duplicated index found for {symbol}, {exp}, {right}, {strike}")
             duplicated_logger.info(f"url: {response.url}")
             data = data[~data.Datetime.duplicated(keep="last")]  ## Last timestamp
 
@@ -1371,6 +1427,7 @@ def retrieve_openInterest(
         raise e
     return data
 
+
 ## Migrate to new API
 @backoff.on_exception(
     backoff.expo,
@@ -1378,9 +1435,7 @@ def retrieve_openInterest(
     max_tries=5,
     logger=logger,
 )
-def retrieve_bulk_open_interest(
-    symbol, exp, start_date, end_date, proxy=None, print_url=False, **kwargs
-):
+def retrieve_bulk_open_interest(symbol, exp, start_date, end_date, proxy=None, print_url=False, **kwargs):
     if not proxy:
         proxy = get_proxy_url()
 
@@ -1394,9 +1449,7 @@ def retrieve_bulk_open_interest(
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(
-            pass_kwargs, retrieve_bulk_open_interest, _type="snapshot"
-        )
+        return resolve_ticker_history(pass_kwargs, retrieve_bulk_open_interest, _type="snapshot")
 
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d")) if exp else 0
@@ -1427,14 +1480,10 @@ def retrieve_bulk_open_interest(
         logger.info(f"Response time: {end_timer - start_timer}")
         logger.info(f"Response URL: {response.url}")
 
-    data = (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
     if not __isSuccesful(response.status_code):
         logger.error("")
-        logger.error(f"Error in retrieve_openInterest")
+        logger.error("Error in retrieve_openInterest")
         logger.error(f"Following error for: {locals()}")
         logger.error(f"Error in retrieving data: {response.text}")
         logger.error("Nothing returned at all")
@@ -1444,9 +1493,7 @@ def retrieve_bulk_open_interest(
         print(response.url) if print_url else None
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
         data["time"] = data["Ms_of_day"].apply(convert_milliseconds)
-        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
-            lambda x: x.strftime("%Y-%m-%d")
-        )
+        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d"))
         data["Date3"] = data.Date2
         data["Datetime"] = pd.to_datetime(data.Date3)
         data.drop(columns=["Date2", "Date3", "Ms_of_day"], inplace=True)
@@ -1460,6 +1507,7 @@ def retrieve_bulk_open_interest(
         logger.info(f"Kwargs: {locals()}")
         raise e
     return data
+
 
 ## Migrate to new API
 async def retrieve_openInterest_async(
@@ -1475,9 +1523,7 @@ async def retrieve_openInterest_async(
     """
     Interval size in miliseconds. 1 minute is 6000
     """
-    assert isinstance(
-        strike, float
-    ), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
     if not proxy:
         proxy = get_proxy_url()
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
@@ -1514,7 +1560,7 @@ async def retrieve_openInterest_async(
 
     if not __isSuccesful(response.status_code):
         logger.error("")
-        logger.error(f"Error in retrieve_openInterest")
+        logger.error("Error in retrieve_openInterest")
         logger.error(f"Following error for: {locals()}")
         logger.error(f"Error in retrieving data: {response.text}")
         logger.error("Nothing returned at all")
@@ -1522,20 +1568,15 @@ async def retrieve_openInterest_async(
         return
 
     print(response.url) if print_url else None
-    data = (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
     data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
     data["time"] = data["Ms_of_day"].apply(convert_milliseconds)
-    data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
-        lambda x: x.strftime("%Y-%m-%d")
-    )
+    data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d"))
     data["Date3"] = data.Date2
     data["Datetime"] = pd.to_datetime(data.Date3)
     data.drop(columns=["Date2", "Date3", "Ms_of_day"], inplace=True)
     return data
+
 
 ## Break away function to helpers
 def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
@@ -1575,19 +1616,13 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
             try:
                 datetime_col_name = kwargs["datetime_col_name"]
             except KeyError:
-                logger.critical(
-                    "`datetime_col_name` not provided for multi index resample, setting to `Datetime`"
-                )
+                logger.critical("`datetime_col_name` not provided for multi index resample, setting to `Datetime`")
                 datetime_col_name = "Datetime"
 
-            return _handle_multi_index_resample(
-                data, datetime_col_name, interval, resample_col=custom_agg_columns
-            )
+            return _handle_multi_index_resample(data, datetime_col_name, interval, resample_col=custom_agg_columns)
 
         else:
-            raise NotImplementedError(
-                "Currently only supports multi index with 2 levels"
-            )
+            raise NotImplementedError("Currently only supports multi index with 2 levels")
 
     string, integer = extract_numeric_value(interval)
     TIMEFRAME_MAP = {
@@ -1619,9 +1654,7 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
             "weighted_midpoint": "last",
         }
 
-    assert (
-        string in TIMEFRAME_MAP.keys()
-    ), f"Available Timeframe Alias are {TIMEFRAME_MAP.keys()}, recieved '{string}'"
+    assert string in TIMEFRAME_MAP.keys(), f"Available Timeframe Alias are {TIMEFRAME_MAP.keys()}, recieved '{string}'"
 
     ## Add EOD time if DateTimeIndex is EOD Series (Dunno why I did this, so taking it for now)
     ## If I remember, will write it here.
@@ -1630,9 +1663,7 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
 
         for col in data.columns:
             if col.lower() in columns.keys():  ## Standard Column Resample
-                resampled.append(
-                    resample(data[col], interval, method=columns[col.lower()])
-                )
+                resampled.append(resample(data[col], interval, method=columns[col.lower()]))
             else:
                 resampled.append(resample(data[col], interval, method=method))
         data = pd.concat(resampled, axis=1)
@@ -1641,14 +1672,11 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
 
     elif isinstance(data, pd.Series):
         if string == "h":
-            data = data.resample(
-                f"{integer*60}T", origin=PRICING_CONFIG["MARKET_OPEN_TIME"]
-            ).__getattr__(method)()
+            data = data.resample(f"{integer * 60}T", origin=PRICING_CONFIG["MARKET_OPEN_TIME"]).__getattr__(method)()
         else:
-            data = data.resample(f"{integer}{TIMEFRAME_MAP[string]}").__getattr__(
-                method
-            )()
+            data = data.resample(f"{integer}{TIMEFRAME_MAP[string]}").__getattr__(method)()
         return enforce_bus_hours(data.fillna(0))
+
 
 ## Break away function to helpers
 def _handle_multi_index_resample(
@@ -1666,9 +1694,7 @@ def _handle_multi_index_resample(
         interval: The interval to resample to
         resample_col: The column to resample
     """
-    assert (
-        len(data.index.names) == 2
-    ), f"Currently only supports multi index with 2 levels, got {len(data.index.names)}"
+    assert len(data.index.names) == 2, f"Currently only supports multi index with 2 levels, got {len(data.index.names)}"
 
     ## Save the order of the MultiIndex
     idx_names = list(data.index.names)
@@ -1693,6 +1719,7 @@ def _handle_multi_index_resample(
     resampled_data = pd.concat(resampled_data_list, axis=0)
     return resampled_data
 
+
 ## Break away function to helpers
 def convert_milliseconds(ms):
     hours = ms // 3600000
@@ -1700,8 +1727,9 @@ def convert_milliseconds(ms):
     minutes = ms // 60000
     ms = ms % 60000
     seconds = ms // 1000
-    milliseconds = ms % 1000
+    _ = ms % 1000
     return f"{hours:02}:{minutes:02}:{seconds:02}"
+
 
 ## Break away function to helpers
 def convert_time_to_miliseconds(time):
@@ -1711,6 +1739,7 @@ def convert_time_to_miliseconds(time):
     secs = time_obj.second * 1_000
     mili = time_obj.microsecond
     return hour + minute + secs + mili
+
 
 ## Migrate to new API
 def retrieve_option_ohlc(
@@ -1746,19 +1775,11 @@ def retrieve_option_ohlc(
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
-    data = (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
     if __isSuccesful(response.status_code):
         if (len(data.columns)) > 1:
             data["mean_volume"] = data.groupby("date")["volume"].transform("mean")
-            data = data.loc[
-                data.groupby("date")["volume"].apply(
-                    lambda x: (x - x.mean()).abs().idxmin()
-                )
-            ]
+            data = data.loc[data.groupby("date")["volume"].apply(lambda x: (x - x.mean()).abs().idxmin())]
             data = data.drop_duplicates(subset="date", keep="last")
             data = data.drop(columns=["mean_volume"])
             data["date"] = pd.to_datetime(data["date"], format="%Y%m%d")
@@ -1768,13 +1789,16 @@ def retrieve_option_ohlc(
     else:
         return response
 
+
 ## Break away function to helpers
 def __isSuccesful(status_code: int):
     return status_code >= 200 and status_code < 300
 
+
 ## Break away function to helpers
 def is_theta_data_retrieval_successful(response):
     return not isinstance(response, str)
+
 
 ## Migrate to new API
 @backoff.on_exception(
@@ -1825,9 +1849,7 @@ def retrieve_chain_bulk(
     headers = {"Accept": "application/json"}
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(
-            pass_kwargs, retrieve_chain_bulk, _type="snapshot"
-        )
+        return resolve_ticker_history(pass_kwargs, retrieve_chain_bulk, _type="snapshot")
 
     start_timer = time.time()
 
@@ -1842,11 +1864,7 @@ def retrieve_chain_bulk(
         raise_thetadata_exception(response, querystring, proxy)
         response_url = response.url
         print(response_url) if print_url else None
-    data = (
-        pd.read_csv(StringIO(response.text))
-        if proxy is None
-        else pd.read_csv(StringIO(response.json()["data"]))
-    )
+    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
     end_timer = time.time()
     if (end_timer - start_timer) > 4:
         logger.info("")
@@ -1864,17 +1882,11 @@ def retrieve_chain_bulk(
         data.columns = data.columns.str.lower()
         data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
         data["weighted_midpoint"] = (
-            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
-            * (data["ask"])
-        ) + (
-            (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
-            * (data["bid"])
-        )
+            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
+        ) + ((data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"]))
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
 
-        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
-            lambda x: x.strftime("%Y-%m-%d")
-        )
+        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d"))
         data["Date3"] = data.Date2
         data["Expiration"] = pd.to_datetime(data.Expiration, format="%Y%m%d")
         data["Strike"] = data.Strike / 1000
@@ -1897,16 +1909,17 @@ def retrieve_chain_bulk(
         data = data[columns]
     return data
 
-## Break away function to helpers
-def ping_proxy():
-    try:
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        payload = {
-            "method": "GET",
-            "url": "http://127.0.0.1:25510/v2/hist/option/eod?end_date=20250619&root=AAPL&use_csv=true&exp=20241220&right=C&start_date=20240101&strike=220000",
-        }
-        proxy_url = os.environ["PROXY_URL"]
-        response = requests.post(proxy_url, headers=headers, json=payload)
-        return response.status_code == 200
-    except Exception as e:
-        return False
+
+# ## Break away function to helpers
+# def ping_proxy():
+#     try:
+#         headers = {"Accept": "application/json", "Content-Type": "application/json"}
+#         payload = {
+#             "method": "GET",
+#             "url": "http://127.0.0.1:25510/v2/hist/option/eod?end_date=20250619&root=AAPL&use_csv=true&exp=20241220&right=C&start_date=20240101&strike=220000",
+#         }
+#         proxy_url = os.environ["PROXY_URL"]
+#         response = requests.post(proxy_url, headers=headers, json=payload)
+#         return response.status_code == 200
+#     except Exception as e:  # noqa
+#         return False
