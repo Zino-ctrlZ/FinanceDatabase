@@ -284,21 +284,21 @@ python dbase/database/SchemaCloning.py create \
 
 ```bash
 # List all non-production environments
-python dbase/database/SchemaCloning.py list
+python dbase/database/db_management.py list
 ```
 
 ### Deleting Test Environments
 
 ```bash
 # Delete single environment (shows databases, asks for confirmation)
-python dbase/database/SchemaCloning.py delete --delete-env test-mean-reversion
+python dbase/database/db_management.py delete --delete-env test-mean-reversion
 
 # Delete multiple environments (shows all databases, asks for confirmation)
-python dbase/database/SchemaCloning.py delete \
+python dbase/database/db_management.py delete \
     --delete-env test-mean-reversion test-arbitrage
 
 # Delete without confirmation prompt
-python dbase/database/SchemaCloning.py delete \
+python dbase/database/db_management.py delete \
     --delete-env test-mean-reversion \
     --confirm
 ```
