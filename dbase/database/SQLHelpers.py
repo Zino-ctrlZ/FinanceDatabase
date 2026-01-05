@@ -1,8 +1,15 @@
-import logging
-import sys, os
+import sys
+import os
 from dotenv import load_dotenv
+import pymysql
+import pandas as pd
+from mysql.connector import Error
+from datetime import datetime
+import mysql.connector
+import atexit
+import signal
+import re
 
-load_dotenv()
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import (
     create_engine,
@@ -19,22 +26,15 @@ from sqlalchemy import (
     DateTime,
     TIMESTAMP,
     PrimaryKeyConstraint,
+    text,
 )
-from sqlalchemy import create_engine, text
-import pymysql
-import pandas as pd
-from mysql.connector import Error
-import sys
-import pandas as pd
-from datetime import datetime
-from trade.helpers.helper import setup_logger, _ipython_shutdown
+
+from .db_utils import clear_database_name_cache, get_database_name, Database
+from trade.helpers.helper import setup_logger
 from trade import register_signal
-import mysql.connector
-import os
-from functools import lru_cache
-from dotenv import load_dotenv
-import atexit
-import signal
+
+load_dotenv()
+
 
 load_dotenv()
 sql_pw = os.environ.get("MYSQL_PASSWORD")
@@ -70,7 +70,42 @@ mysql_to_python = {
     "json": "dict",
     "tinyint": "bool",
 }
-portfolio_data_db = "portfolio_data"
+
+# Module-level environment context (set by TFP-Algo)
+ENVIRONMENT_CONTEXT = {"environment": None, "branch_name": None}
+
+
+def set_environment_context(environment: str = None, branch_name: str = None):
+    """
+    Set environment context for database name resolution.
+
+    This function is called by TFP-Algo runner.py at startup to set the
+    current environment and branch name, which are then used to resolve
+    environment-aware database names.
+
+    Args:
+        environment: Environment name (e.g., 'prod', 'test', 'test-mean-reversion')
+        branch_name: Git branch name (e.g., 'main', 'feature-branch')
+
+    Note:
+        When the environment context changes, the database name cache is cleared
+        to ensure fresh resolution for the new environment.
+    """
+    global ENVIRONMENT_CONTEXT
+    # Update the existing dictionary instead of creating a new one
+    ENVIRONMENT_CONTEXT["environment"] = environment
+    ENVIRONMENT_CONTEXT["branch_name"] = branch_name
+    # Clear cache when context changes
+
+    clear_database_name_cache()
+
+
+def get_current_environment():
+    return ENVIRONMENT_CONTEXT.get("environment", "")
+
+
+def get_current_branch_name():
+    return ENVIRONMENT_CONTEXT.get("branch_name", "")
 
 
 def create_engine_short(db):
@@ -96,14 +131,30 @@ def create_pymysql_connection(db):
 
 def get_engine(db_name):
     """
-    Get a SQLAlchemy engine for the given database name and process ID. This saves to a cache to avoid creating multiple engines for the same database in the same process.
+    Get a SQLAlchemy engine with environment-aware database name resolution.
+
+    This function resolves the database name based on the current environment context
+    (set via set_environment_context()). For production, it uses the base name.
+    For test environments, it resolves to the environment-specific database name.
+    This saves to a cache to avoid creating multiple engines for the same database in the same process.
+
+    Args:
+        db_name: Base database name (e.g., 'portfolio_data')
+
+    Returns:
+        SQLAlchemy engine for the resolved database name
     """
+    resolved_name = db_name
+
+    # Use existing caching logic with resolved name
     pid = os.getpid()
-    key = (pid, db_name)
+    key = (pid, resolved_name)
 
     if key not in _PROCESS_ENGINE_CACHE:
-        print(f"[get_engine] Creating engine for DB: {db_name}, PID: {pid}")
-        _PROCESS_ENGINE_CACHE[key] = create_engine_short(db_name)
+        print(
+            f"[get_engine] Creating engine for DB: {resolved_name} (base: {db_name}), PID: {pid}"
+        )
+        _PROCESS_ENGINE_CACHE[key] = create_engine_short(resolved_name)
 
     return _PROCESS_ENGINE_CACHE[key]
 
@@ -315,14 +366,34 @@ def query_database_as_dict(db, table_name, query):
         raise e
 
 
-def create_SQL_connection():
+def create_SQL_connection(database: str = None):
+    """
+    Create a MySQL connection.
+
+    Args:
+        database: Database name to connect to. If None, defaults to 'securities_master'.
+                 Will be resolved using environment-aware name resolution.
+
+    Returns:
+        MySQL connection object
+    """
+
+    # Use default if not provided
+    if database is None:
+        database = Database.SECURITIES_MASTER
+
+    # Resolve environment-aware database name
+    env = get_current_environment()
+    branch = get_current_branch_name()
+    resolved_db = get_database_name(database, environment=env, branch_name=branch)
+
     try:
         connection = mysql.connector.connect(
             # The IP address or domain name of your MySQL server (e.g., '192.168.1.100' or 'yourdomain.com')
             host=sql_host,
             # MySQL port number (typically 3306)
             port=sql_port,
-            database="securities_master",  # The name of the database you want to connect to
+            database=resolved_db,  # Use resolved database name
             user=sql_user,  # Your MySQL username
             password=sql_pw,  # Your MySQL password
         )
@@ -356,12 +427,31 @@ def create_SQL_database(connection, db_name):
 
 
 def get_table_schema(db_name, table_name) -> list[dict[str, str]]:
-    engine = get_engine("portfolio_data")
+    """
+    Get the schema for a table in a database.
+
+    Args:
+        db_name: Base database name (e.g., 'portfolio_data')
+        table_name: Name of the table
+
+    Returns:
+        List of dictionaries containing column information
+    """
+
+    # Resolve environment-aware database name
+    env = get_current_environment()
+    branch = get_current_branch_name()
+    resolved_db = get_database_name(db_name, environment=env, branch_name=branch)
+
+    # Use resolved database name for both engine and query
+    engine = get_engine(
+        db_name
+    )  # get_engine() also resolves, but we need resolved_db for the query
     engine.connect()
     query = text(f"""
             SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
             FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = '{db_name}' AND TABLE_NAME = '{table_name}';
+            WHERE TABLE_SCHEMA = '{resolved_db}' AND TABLE_NAME = '{table_name}';
         """)
     types = []
     try:
@@ -622,6 +712,28 @@ def execute_query(db, table_name, query, params=None):
         logger.info("Query executed successfully.", end="\r")
 
 
+def _rewrite_query_database_names(query: str, old_db: str, new_db: str) -> str:
+    """
+    Rewrite database references in SQL queries.
+
+    This function replaces references to the old database name with the new
+    database name in SQL queries. Useful when queries contain explicit
+    database.table references that need to be updated for environment-aware resolution.
+
+    Args:
+        query: SQL query string
+        old_db: Original database name (base name)
+        new_db: New database name (resolved name)
+
+    Returns:
+        Query string with database references rewritten
+    """
+    # Replace database.table references
+    pattern = rf"\b{re.escape(old_db)}\.(\w+)"
+    replacement = f"{new_db}.\\1"
+    return re.sub(pattern, replacement, query)
+
+
 def ping_mysql() -> bool:
     try:
         connection = mysql.connector.connect(
@@ -655,30 +767,45 @@ class DatabaseAdapter:
         _raise: bool = False,
     ):
         """
-        Save data to a SQL database table. If the table does not exist, it will be created.
+        Save data to a SQL database table with environment-aware database name resolution.
+        If the table does not exist, it will be created.
+
         Parameters:
         - data: DataFrame to be saved.
-        - db: Name of the database.
+        - db: Base database name (e.g., 'portfolio_data').
         - table_name: Name of the table to save the data.
         - filter_data: Whether to filter the data before saving (default is True).
         - _raise: Whether to raise an exception if an error occurs (default is False).
         """
+        # Resolve environment-aware database name
+        env = get_current_environment()
+        branch = get_current_branch_name()
+        resolved_db = get_database_name(db, environment=env, branch_name=branch)
 
         data = self.__filter_data(data) if filter_data else data
-        store_SQL_data_Insert_Ignore(db, table_name, data, _raise=_raise)
+        store_SQL_data_Insert_Ignore(resolved_db, table_name, data, _raise=_raise)
 
     def query_database(self, db: str, table_name: str, query: str) -> pd.DataFrame:
         """
-        Query the database and return the result as a pandas DataFrame.
+        Query the database with environment-aware database name resolution.
+
         Parameters:
-        - db: Name of the database.
+        - db: Base database name (e.g., 'portfolio_data').
         - table_name: Name of the table to query.
-        - query: SQL query to execute.
+        - query: SQL query to execute. Database references in the query will be
+                 automatically rewritten to use the environment-aware database name.
         Returns:
         - DataFrame containing the query result.
         """
-        data = query_database(db, table_name, query)
-        return data
+        # Resolve environment-aware database name
+        env = get_current_environment()
+        branch = get_current_branch_name()
+        resolved_db = get_database_name(db, environment=env, branch_name=branch)
+
+        # Update query if it contains database references
+        query = _rewrite_query_database_names(query, db, resolved_db)
+
+        return query_database(resolved_db, table_name, query)
 
     def __filter_data(self, data):
         ## To-doL Add a warning log here for dropping second duplicate columns
