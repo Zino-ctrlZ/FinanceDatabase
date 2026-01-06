@@ -78,7 +78,7 @@ def get_databases_for_environment(environment: str) -> dict[str, str]:
     if result.empty:
         return {}
 
-    return dict(zip(result["base_name"], result["database_name"]))
+    return dict(zip(result["base_name"], result["database_name"])) # noqa
 
 
 def check_database_conflict(db_name: str) -> None:
