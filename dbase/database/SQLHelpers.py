@@ -72,7 +72,7 @@ mysql_to_python = {
 }
 
 # Module-level environment context (set by TFP-Algo)
-ENVIRONMENT_CONTEXT = {"environment": None, "branch_name": None}
+ENVIRONMENT_CONTEXT = {"environment": "test", "branch_name": None}
 
 
 def set_environment_context(environment: str = None, branch_name: str = None):
@@ -625,8 +625,10 @@ def dynamic_batch_update(db, table_name, update_values, condition, debug=False):
     Returns:
     - dict: Contains 'success' (bool), 'rows_updated' (int), 'rows_matched' (int), and optional 'debug_info'
     """
-
-    engine = get_engine(db)
+    resolved_db = get_database_name(
+        db, environment=get_current_environment(), branch_name=get_current_branch_name()
+    )
+    engine = get_engine(resolved_db)
 
     # Create the SET clause
     set_clause = ", ".join([f"{col} = :{col}" for col in update_values.keys()])
