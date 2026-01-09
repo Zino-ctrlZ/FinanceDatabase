@@ -204,8 +204,9 @@ from trade.helpers.Logging import setup_logger
 logger = setup_logger("dbase.DataAPI.ThetaData", stream_log_level="INFO")
 
 ## Determine whether to use V2 or V3 of the ThetaData API
-USE_V2 = os.environ.get("THETADATA_USE_V3", "true").lower() == "false"
-# USE_V2 = False  ## FORCING V3 USAGE FOR NOW
+USE_V2 = (
+    os.environ.get("THETADATA_USE_V3", "false").lower() == "false"
+)  # V2 usage by default
 
 
 def get_use_v2():
