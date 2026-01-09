@@ -33,6 +33,42 @@ class Database:
 # Module-level cache for database name resolution
 _DB_NAME_CACHE = {}  # {(environment, base_name): full_name}
 
+# Module-level environment context (set by TFP-Algo)
+ENVIRONMENT_CONTEXT = {"environment": "test", "branch_name": None}
+
+
+def set_environment_context(environment: str = None, branch_name: str = None):
+    """
+    Set environment context for database name resolution.
+
+    This function is called by TFP-Algo runner.py at startup to set the
+    current environment and branch name, which are then used to resolve
+    environment-aware database names.
+
+    Args:
+        environment: Environment name (e.g., 'prod', 'test', 'test-mean-reversion')
+        branch_name: Git branch name (e.g., 'main', 'feature-branch')
+
+    Note:
+        When the environment context changes, the database name cache is cleared
+        to ensure fresh resolution for the new environment.
+    """
+    global ENVIRONMENT_CONTEXT
+    # Update the existing dictionary instead of creating a new one
+    ENVIRONMENT_CONTEXT["environment"] = environment
+    ENVIRONMENT_CONTEXT["branch_name"] = branch_name
+    # Clear cache when context changes
+
+    clear_database_name_cache()
+
+
+def get_current_environment():
+    return ENVIRONMENT_CONTEXT.get("environment", "")
+
+
+def get_current_branch_name():
+    return ENVIRONMENT_CONTEXT.get("branch_name", "")
+
 
 def get_environment(branch_name: str = None, cli_arg: str = None) -> str:
     """
@@ -73,11 +109,15 @@ def get_database_name(
     if base_name == Database.MASTER_CONFIG:
         return Database.MASTER_CONFIG
 
-    # Determine environment
-    if not environment:
-        env = get_environment(branch_name=branch_name)
-    else:
+    if environment:
         env = environment
+    else:
+        env = get_current_environment()
+
+    if branch_name:
+        branch_name = branch_name
+    else:
+        branch_name = get_current_branch_name()
 
     # Check cache
     cache_key = (env, base_name)

@@ -29,7 +29,12 @@ from sqlalchemy import (
     text,
 )
 
-from .db_utils import clear_database_name_cache, get_database_name, Database
+from .db_utils import (
+    get_database_name,
+    Database,
+    get_current_environment,
+    get_current_branch_name,
+)
 from trade.helpers.helper import setup_logger
 from trade import register_signal
 
@@ -71,47 +76,12 @@ mysql_to_python = {
     "tinyint": "bool",
 }
 
-# Module-level environment context (set by TFP-Algo)
-ENVIRONMENT_CONTEXT = {"environment": "test", "branch_name": None}
-
-
-def set_environment_context(environment: str = None, branch_name: str = None):
-    """
-    Set environment context for database name resolution.
-
-    This function is called by TFP-Algo runner.py at startup to set the
-    current environment and branch name, which are then used to resolve
-    environment-aware database names.
-
-    Args:
-        environment: Environment name (e.g., 'prod', 'test', 'test-mean-reversion')
-        branch_name: Git branch name (e.g., 'main', 'feature-branch')
-
-    Note:
-        When the environment context changes, the database name cache is cleared
-        to ensure fresh resolution for the new environment.
-    """
-    global ENVIRONMENT_CONTEXT
-    # Update the existing dictionary instead of creating a new one
-    ENVIRONMENT_CONTEXT["environment"] = environment
-    ENVIRONMENT_CONTEXT["branch_name"] = branch_name
-    # Clear cache when context changes
-
-    clear_database_name_cache()
-
-
-def get_current_environment():
-    return ENVIRONMENT_CONTEXT.get("environment", "")
-
-
-def get_current_branch_name():
-    return ENVIRONMENT_CONTEXT.get("branch_name", "")
-
 
 def create_engine_short(db):
     """
     Create a SQLAlchemy engine for the given database.
     """
+
     return create_engine(f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}")
 
 
@@ -144,7 +114,7 @@ def get_engine(db_name):
     Returns:
         SQLAlchemy engine for the resolved database name
     """
-    resolved_name = db_name
+    resolved_name = get_database_name(db_name)
 
     # Use existing caching logic with resolved name
     pid = os.getpid()
@@ -163,14 +133,15 @@ def get_pymysql_connection(db_name):
     """
     Get a pymysql connection for the given database name and process ID. This saves to a cache to avoid creating multiple connections for the same database in the same process.
     """
+    resolved_db_name = get_database_name(db_name)
     pid = os.getpid()
     key = (pid, db_name)
 
     if key not in _PYMYSQL_CONNECTION_CACHE:
         print(
-            f"[get_pymysql_connection] Creating connection for DB: {db_name}, PID: {pid}"
+            f"[get_pymysql_connection] Creating connection for DB: {resolved_db_name}, PID: {pid}"
         )
-        _PYMYSQL_CONNECTION_CACHE[key] = create_pymysql_connection(db_name)
+        _PYMYSQL_CONNECTION_CACHE[key] = create_pymysql_connection(resolved_db_name)
 
     return _PYMYSQL_CONNECTION_CACHE[key]
 
@@ -383,9 +354,7 @@ def create_SQL_connection(database: str = None):
         database = Database.SECURITIES_MASTER
 
     # Resolve environment-aware database name
-    env = get_current_environment()
-    branch = get_current_branch_name()
-    resolved_db = get_database_name(database, environment=env, branch_name=branch)
+    resolved_db = get_database_name(database)
 
     try:
         connection = mysql.connector.connect(
@@ -439,9 +408,7 @@ def get_table_schema(db_name, table_name) -> list[dict[str, str]]:
     """
 
     # Resolve environment-aware database name
-    env = get_current_environment()
-    branch = get_current_branch_name()
-    resolved_db = get_database_name(db_name, environment=env, branch_name=branch)
+    resolved_db = get_database_name(db_name)
 
     # Use resolved database name for both engine and query
     engine = get_engine(
@@ -625,10 +592,7 @@ def dynamic_batch_update(db, table_name, update_values, condition, debug=False):
     Returns:
     - dict: Contains 'success' (bool), 'rows_updated' (int), 'rows_matched' (int), and optional 'debug_info'
     """
-    resolved_db = get_database_name(
-        db, environment=get_current_environment(), branch_name=get_current_branch_name()
-    )
-    engine = get_engine(resolved_db)
+    engine = get_engine(db)
 
     # Create the SET clause
     set_clause = ", ".join([f"{col} = :{col}" for col in update_values.keys()])
@@ -716,11 +680,12 @@ def execute_query(db, table_name, query, params=None):
 
 def _rewrite_query_database_names(query: str, old_db: str, new_db: str) -> str:
     """
-    Rewrite database references in SQL queries.
+    Rewrite database references in SQL queries (case-insensitive).
 
     This function replaces references to the old database name with the new
     database name in SQL queries. Useful when queries contain explicit
     database.table references that need to be updated for environment-aware resolution.
+    Handles case-insensitive matching (e.g., PORTFOLIO_DATA vs portfolio_data).
 
     Args:
         query: SQL query string
@@ -730,10 +695,13 @@ def _rewrite_query_database_names(query: str, old_db: str, new_db: str) -> str:
     Returns:
         Query string with database references rewritten
     """
-    # Replace database.table references
+    # Replace database.table references (case-insensitive)
+    # Match old_db.table in any case combination
     pattern = rf"\b{re.escape(old_db)}\.(\w+)"
     replacement = f"{new_db}.\\1"
-    return re.sub(pattern, replacement, query)
+    result = re.sub(pattern, replacement, query, flags=re.IGNORECASE)
+
+    return result
 
 
 def ping_mysql() -> bool:
@@ -780,9 +748,7 @@ class DatabaseAdapter:
         - _raise: Whether to raise an exception if an error occurs (default is False).
         """
         # Resolve environment-aware database name
-        env = get_current_environment()
-        branch = get_current_branch_name()
-        resolved_db = get_database_name(db, environment=env, branch_name=branch)
+        resolved_db = get_database_name(db)
 
         data = self.__filter_data(data) if filter_data else data
         store_SQL_data_Insert_Ignore(resolved_db, table_name, data, _raise=_raise)
@@ -800,14 +766,11 @@ class DatabaseAdapter:
         - DataFrame containing the query result.
         """
         # Resolve environment-aware database name
-        env = get_current_environment()
-        branch = get_current_branch_name()
-        resolved_db = get_database_name(db, environment=env, branch_name=branch)
 
         # Update query if it contains database references
-        query = _rewrite_query_database_names(query, db, resolved_db)
+        query = _rewrite_query_database_names(query, db, get_database_name(db))
 
-        return query_database(resolved_db, table_name, query)
+        return query_database(db, table_name, query)
 
     def __filter_data(self, data):
         ## To-doL Add a warning log here for dropping second duplicate columns

@@ -5,7 +5,7 @@ import os
 import requests
 import logging
 from datetime import datetime
-from dbase.database.SQLHelpers import get_current_environment
+from dbase.database.db_utils import get_current_environment
 
 # Set up logging - fallback if trade package is not available
 try:

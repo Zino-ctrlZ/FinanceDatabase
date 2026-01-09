@@ -14,7 +14,6 @@ from .SQLHelpers import (
     list_tables_from_db,
     store_SQL_data_Insert_Ignore,
     ping_mysql,
-    set_environment_context,  # NEW: Environment context management
     create_table_from_schema,
     execute_query,
     get_table_schema,
@@ -31,6 +30,9 @@ from .db_utils import (
     get_database_name,  # Environment-aware database name resolution
     get_environment,  # Environment detection
     clear_database_name_cache,  # Cache management
+    set_environment_context,  # Environment context management
+    get_current_environment,
+    get_current_branch_name,
 )
 
 # Import from SchemaCloning - schema cloning and deletion functions
@@ -50,7 +52,6 @@ __all__ = [
     "list_tables_from_db",
     "store_SQL_data_Insert_Ignore",
     "ping_mysql",
-    "set_environment_context",  # NEW
     "create_table_from_schema",
     "execute_query",
     "get_table_schema",
@@ -59,12 +60,15 @@ __all__ = [
     "create_SQL_connection",
     "close_SQL_connection",
     "create_SQL_database",
-    # Database exports
+    # Database Utilities exports
     "Database",
     "get_database_name",
     "get_environment",
     "clear_database_name_cache",
-    # SchemaCloning exports
+    "set_environment_context",
+    "get_current_environment",
+    "get_current_branch_name",
+    # Database Management exports
     "create_test_environment",
     "delete_environment",
     "list_environments",
