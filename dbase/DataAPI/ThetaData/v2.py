@@ -200,15 +200,16 @@ See Also
 """
 
 from trade.helpers.Logging import setup_logger
-
+from trade import reload_pricing_config
 import requests
 import re
+import numpy as np
 import time
 from io import StringIO
 import pandas as pd
 import json
 from datetime import datetime
-from dbase.utils import add_eod_timestamp, enforce_bus_hours, PRICING_CONFIG
+from dbase.utils import add_eod_timestamp, enforce_bus_hours
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS
 from trade.helpers.helper import compare_dates, generate_option_tick
 from copy import deepcopy
@@ -221,12 +222,18 @@ from ..ThetaExceptions import (
     raise_thetadata_exception,
 )
 from .proxy import get_proxy_url, schedule_kwargs, get_should_schedule
-
 import backoff
+
+reload_pricing_config()
+from trade import PRICING_CONFIG # noqa
 
 logger = setup_logger("dbase.DataAPI.ThetaData")
 duplicated_logger = setup_logger("dbase.DataAPI.ThetaData.duplicated")
-EMPTY_DF_SAMPLES = {"retrieve_openInterest": pd.DataFrame(columns=["Open_interest", "Date", "time", "Datetime"])}
+EMPTY_DF_SAMPLES = {
+    "retrieve_openInterest": pd.DataFrame(
+        columns=["Open_interest", "Date", "time", "Datetime"]
+    )
+}
 
 
 def quote_to_eod_patch(
@@ -268,6 +275,7 @@ def quote_to_eod_patch(
     """
     if quote_func is None:
         quote_func = retrieve_quote
+
 
     q = quote_func(
         symbol=symbol,
@@ -321,6 +329,9 @@ def quote_to_eod_patch(
     )
     q_to_eod.index = pd.to_datetime(q_to_eod.index)
     q_to_eod.index.name = "Datetime"
+
+    ## Quote v2 doesn't have volume data, so we set it to NaN
+    q_to_eod["Volume"] = np.nan
     return q_to_eod
 
 
@@ -339,14 +350,20 @@ def resolve_ticker_history(kwargs, _callable, _type="historical"):
         try:
             old_tick_data = (
                 _callable(**old_tick_kwargs)
-                if compare_dates.is_before(pd.Timestamp(kwargs["start_date"]), pd.Timestamp(change_date))
+                if compare_dates.is_before(
+                    pd.Timestamp(kwargs["start_date"]), pd.Timestamp(change_date)
+                )
                 else None
             )
             old_tick_data = (
-                old_tick_data[old_tick_data.index.duplicated(keep="first")] if old_tick_data is not None else None
+                old_tick_data[old_tick_data.index.duplicated(keep="first")]
+                if old_tick_data is not None
+                else None
             )
         except ThetaDataNotFound as e:
-            logger.info(f"No data found for Old_tick {old_tick} on {kwargs['start_date']}")
+            logger.info(
+                f"No data found for Old_tick {old_tick} on {kwargs['start_date']}"
+            )
             logger.info(f"Error: {e}")
             old_tick_data = None
 
@@ -354,11 +371,15 @@ def resolve_ticker_history(kwargs, _callable, _type="historical"):
         try:
             new_tick_data = (
                 _callable(**new_tick_kwargs)
-                if compare_dates.is_on_or_after(pd.Timestamp(kwargs["exp"]), pd.Timestamp(change_date))
+                if compare_dates.is_on_or_after(
+                    pd.Timestamp(kwargs["exp"]), pd.Timestamp(change_date)
+                )
                 else None
             )  ## Opting for expiration date instead of end date cause data cannot go beyond expiration date
             new_tick_data = (
-                new_tick_data[~new_tick_data.index.duplicated(keep="first")] if new_tick_data is not None else None
+                new_tick_data[~new_tick_data.index.duplicated(keep="first")]
+                if new_tick_data is not None
+                else None
             )
         except ThetaDataNotFound as e:
             logger.info(f"No data found for new_tick {new_tick} on {kwargs['exp']}")
@@ -382,7 +403,9 @@ def resolve_ticker_history(kwargs, _callable, _type="historical"):
         new_tick_kwargs = deepcopy(kwargs)
         new_tick_kwargs["symbol"] = (
             old_tick
-            if compare_dates.is_before(pd.Timestamp(kwargs["start_date"]), pd.Timestamp(change_date))
+            if compare_dates.is_before(
+                pd.Timestamp(kwargs["start_date"]), pd.Timestamp(change_date)
+            )
             else new_tick
         )
         return _callable(**new_tick_kwargs)
@@ -413,7 +436,11 @@ def greek_snapshot(symbol, proxy=None):
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
-    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    return (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
 
 
 ## Migrate to new API
@@ -427,7 +454,11 @@ def ohlc_snapshot(symbol, proxy=None):
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
-    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    return (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
 
 
 ## Migrate to new API
@@ -441,7 +472,11 @@ def open_interest_snapshot(symbol, proxy=None):
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
-    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    return (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
 
 
 ## Migrate to new API
@@ -455,7 +490,11 @@ def quote_snapshot(symbol, proxy=None):
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
-    return pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    return (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
 
 
 ## Migrate to new API
@@ -488,7 +527,11 @@ def list_contracts(symbol, start_date, print_url=False, proxy=None, **kwargs):
         raise_thetadata_exception(response, querystring, proxy)
         print(response.url) if print_url else None
 
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
     if data.shape[0] == 0:
         logger.error(f"No contracts found for {symbol} on {start_date}")
         logger.error(f"response: {response.text}")
@@ -561,7 +604,9 @@ def retrieve_ohlc(
 
     if not proxy:
         proxy = get_proxy_url()
-    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(
+        strike, float
+    ), f"strike should be type float, recieved {type(strike)}"
     interval = PRICING_CONFIG["INTRADAY_AGG"]
     strike_og, start_og, end_og, exp_og, start_time_og = (
         strike,
@@ -610,7 +655,11 @@ def retrieve_ohlc(
         logger.info(f"Response time: {end_timer - start_timer}")
         logger.info(f"Response URL: {response.url}")
 
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_ohlc")
@@ -658,11 +707,15 @@ def retrieve_ohlc(
                 "Midpoint",
             ]
         ]
-        
+
         data = quote_data.merge(data, on=["Date", "time"], how="left")
-        data.rename(columns={"Closeask": "CloseAsk", "Closebid": "CloseBid"}, inplace=True)
+        data.rename(
+            columns={"Closeask": "CloseAsk", "Closebid": "CloseBid"}, inplace=True
+        )
         data["Date"] = data["Date"].astype(str) + " " + data["time"]
-        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d %H:%M:%S"))
+        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
+            lambda x: x.strftime("%Y-%m-%d %H:%M:%S")
+        )
         data["Date3"] = data.Date2
         data["datetime"] = pd.to_datetime(data.Date3)
         data.set_index("datetime", inplace=True)
@@ -709,7 +762,9 @@ def retrieve_eod_ohlc(
     """
     Interval size in miliseconds. 1 minute is 6000
     """
-    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(
+        strike, float
+    ), f"strike should be type float, recieved {type(strike)}"
     if not proxy:
         proxy = get_proxy_url()
     ## Scheduling to update to database
@@ -739,7 +794,9 @@ def retrieve_eod_ohlc(
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(pass_kwargs, retrieve_eod_ohlc, _type="historical")
+        return resolve_ticker_history(
+            pass_kwargs, retrieve_eod_ohlc, _type="historical"
+        )
     end_date_int = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
     exp_int = int(pd.to_datetime(exp).strftime("%Y%m%d"))
     start_date_int = int(pd.to_datetime(start_date).strftime("%Y%m%d"))
@@ -790,7 +847,11 @@ def retrieve_eod_ohlc(
         logger.info(f"Response time: {end_timer - start_timer}")
         logger.info(f"Response URL: {response.url}")
 
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_eod_ohlc")
@@ -801,8 +862,12 @@ def retrieve_eod_ohlc(
     else:
         data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
         data["weighted_midpoint"] = (
-            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
-        ) + ((data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"]))
+            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
+            * (data["ask"])
+        ) + (
+            (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
+            * (data["bid"])
+        )
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
 
         data["time"] = "16:00:00" if rt else ""
@@ -848,7 +913,9 @@ async def retrieve_eod_ohlc_async(
     """
     Interval size in miliseconds. 1 minute is 6000
     """
-    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(
+        strike, float
+    ), f"strike should be type float, recieved {type(strike)}"
     if not proxy:
         proxy = get_proxy_url()
     pass_kwargs = {
@@ -862,7 +929,9 @@ async def retrieve_eod_ohlc_async(
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(pass_kwargs, retrieve_eod_ohlc_async, _type="historical")
+        return resolve_ticker_history(
+            pass_kwargs, retrieve_eod_ohlc_async, _type="historical"
+        )
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))
     start_date = int(pd.to_datetime(start_date).strftime("%Y%m%d"))
@@ -899,7 +968,11 @@ async def retrieve_eod_ohlc_async(
         logger.info(f"Response URL: {response.url}")
 
     print(response.url) if print_url else None
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_eod_ohlc")
@@ -910,12 +983,18 @@ async def retrieve_eod_ohlc_async(
     else:
         data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
         data["weighted_midpoint"] = (
-            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
-        ) + ((data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"]))
+            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
+            * (data["ask"])
+        ) + (
+            (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
+            * (data["bid"])
+        )
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
 
         data["time"] = "16:00:00" if rt else ""
-        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d"))
+        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
+            lambda x: x.strftime("%Y-%m-%d")
+        )
         data["Date3"] = data.Date2
         data["datetime"] = pd.to_datetime(data.Date3)
         data["datetime"].hour = 16
@@ -947,7 +1026,9 @@ async def retrieve_eod_ohlc_async(
     max_tries=5,
     logger=logger,
 )
-def retrieve_bulk_eod(symbol, exp, start_date, end_date, proxy=None, print_url=False, **kwargs):
+def retrieve_bulk_eod(
+    symbol, exp, start_date, end_date, proxy=None, print_url=False, **kwargs
+):
     if not proxy:
         proxy = get_proxy_url()
 
@@ -961,7 +1042,9 @@ def retrieve_bulk_eod(symbol, exp, start_date, end_date, proxy=None, print_url=F
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(pass_kwargs, retrieve_bulk_eod, _type="historical")
+        return resolve_ticker_history(
+            pass_kwargs, retrieve_bulk_eod, _type="historical"
+        )
 
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))
@@ -993,7 +1076,11 @@ def retrieve_bulk_eod(symbol, exp, start_date, end_date, proxy=None, print_url=F
         logger.info(f"Response time: {end_timer - start_timer}")
         logger.info(f"Response URL: {response.url}")
 
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_bulk_eod")
@@ -1003,8 +1090,12 @@ def retrieve_bulk_eod(symbol, exp, start_date, end_date, proxy=None, print_url=F
     else:
         data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
         data["weighted_midpoint"] = (
-            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
-        ) + ((data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"]))
+            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
+            * (data["ask"])
+        ) + (
+            (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
+            * (data["bid"])
+        )
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
 
         data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
@@ -1067,7 +1158,9 @@ def retrieve_quote_rt(
     if not proxy:
         proxy = get_proxy_url()
     interval = "1h"
-    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(
+        strike, float
+    ), f"strike should be type float, recieved {type(strike)}"
     pass_kwargs = {
         "symbol": symbol,
         "end_date": end_date,
@@ -1086,7 +1179,9 @@ def retrieve_quote_rt(
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
 
-        return resolve_ticker_history(pass_kwargs, retrieve_quote_rt, _type="historical")
+        return resolve_ticker_history(
+            pass_kwargs, retrieve_quote_rt, _type="historical"
+        )
     end_date = int(datetime.now().strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))
     ivl = identify_length(*extract_numeric_value(interval), rt=True) * 60000
@@ -1095,7 +1190,11 @@ def retrieve_quote_rt(
     strike = int(strike)
     start_time = str(convert_time_to_miliseconds(start_time))
     end_time = str(convert_time_to_miliseconds(end_time))
-    url = "http://127.0.0.1:25510/v2/snapshot/option/quote" if not ts else "http://127.0.0.1:25510/v2/hist/option/quote"
+    url = (
+        "http://127.0.0.1:25510/v2/snapshot/option/quote"
+        if not ts
+        else "http://127.0.0.1:25510/v2/hist/option/quote"
+    )
     querystring = {
         "end_date": end_date,
         "root": symbol,
@@ -1129,7 +1228,11 @@ def retrieve_quote_rt(
         logger.info(f"Response URL: {response.url}")
 
     print(response.url) if print_url else None
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_quote_rt")
@@ -1138,8 +1241,12 @@ def retrieve_quote_rt(
     else:
         data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
         data["weighted_midpoint"] = (
-            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
-        ) + ((data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"]))
+            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
+            * (data["ask"])
+        ) + (
+            (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
+            * (data["bid"])
+        )
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
         data["time"] = data["Ms_of_day"].apply(lambda c: convert_milliseconds(c))
         data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
@@ -1170,22 +1277,94 @@ def bootstrap_ohlc(data: pd.DataFrame, copy_column: str = "Midpoint"):
         The formatted OHLC data.
     """
 
-    new_cols = ["Open", "High", "Low", "Close", "Volume"]
+    new_cols = ["Open", "High", "Low", "Close"]
     copy_column = "Midpoint"
     for col in new_cols:
         if col not in data.columns:
             data[col.capitalize()] = data[copy_column]
+    if "volume" in data.columns.str.lower():
+        copycat = [col for col in data.columns if col.lower() == "volume"][0]
+        data["Volume"] = data[copycat]
+    else:
+        data["Volume"] = np.nan
 
     return data
 
 
 ## Migrate to new API
-@backoff.on_exception(
-    backoff.expo,
-    (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
-    max_tries=5,
-    logger=logger,
-)
+# @backoff.on_exception(
+#     backoff.expo,
+#     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
+#     max_tries=5,
+#     logger=logger,
+# )
+
+
+def list_dates(
+    symbol,
+    exp: str,
+    right: str,
+    strike: float,
+    print_url=False,
+    proxy=None,
+    **kwargs,
+):
+    """
+    List available dates for option quotes
+    """
+    if not proxy:
+        proxy = get_proxy_url()
+    assert isinstance(
+        strike, float
+    ), f"strike should be type float, recieved {type(strike)}"
+    pass_kwargs = {
+        "symbol": symbol,
+        "exp": exp,
+        "right": right,
+        "strike": strike,
+        "print_url": print_url,
+    }
+    depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
+    if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
+        pass_kwargs["depth"] += 1
+
+        return resolve_ticker_history(pass_kwargs, list_dates, _type="historical")
+    exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))
+    strike *= 1000
+    strike = int(strike)
+    url = "http://127.0.0.1:25510/v2/list/dates/option/quote"
+    querystring = {
+        "root": symbol,
+        "use_csv": "true",
+        "exp": exp,
+        "right": right,
+        "strike": strike,
+    }
+    headers = {"Accept": "application/json"}
+    start_timer = time.time()
+    if proxy:
+        response = request_from_proxy(url, querystring, proxy)
+        response_url = f"{url}?{'&'.join([f'{key}={value}' for key, value in querystring.items()])}"
+        print(response_url) if print_url else None
+        raise_thetadata_exception(response, querystring, proxy)
+    else:
+        response = requests.get(url, headers=headers, params=querystring)
+        raise_thetadata_exception(response, querystring, proxy)
+        print(response.url) if print_url else None
+    end_timer = time.time()
+    if (end_timer - start_timer) > 4:
+        logger.info("")
+        logger.info(f"Long response time for {symbol}, {exp}, {right}, {strike}")
+        logger.info(f"Response time: {end_timer - start_timer}")
+        logger.info(f"Response URL: {response.url}")
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
+
+    return pd.to_datetime(data["date"], format="%Y%m%d").dt.strftime("%Y-%m-%d").tolist()
+
 def retrieve_quote(
     symbol,
     end_date: str,
@@ -1205,7 +1384,9 @@ def retrieve_quote(
     Interval size in miliseconds. 1 minute is 6000
     """
 
-    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(
+        strike, float
+    ), f"strike should be type float, recieved {type(strike)}"
 
     ##FIXME: ONE Time fix. We use 9:45 for start_time when bootstrapping ohlc to ensure there is data for open
     if start_time is None:
@@ -1213,6 +1394,7 @@ def retrieve_quote(
             start_time = PRICING_CONFIG["QUOTE_DATA_START_TIME"]
         else:
             start_time = PRICING_CONFIG["MARKET_OPEN_TIME"]
+
     pass_kwargs = {
         "symbol": symbol,
         "end_date": end_date,
@@ -1282,25 +1464,36 @@ def retrieve_quote(
         logger.info(f"Response time: {end_timer - start_timer}")
         logger.info(f"Response URL: {response.url}")
 
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
     if len(data.columns) == 1:
         logger.error("")
         logger.error("Error in retrieve_quote function")
         logger.error(f"Following error for: {locals()}")
-        logger.error(f"EOD OHLC mismatching dataframe size. Response: {data.columns[0]}")
+        logger.error(
+            f"EOD OHLC mismatching dataframe size. Response: {data.columns[0]}"
+        )
         logger.error("No data returned at all")
         logger.info(f"Kwargs: {locals()}")
         return
     data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
-    data["weighted_midpoint"] = ((data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])) + (
+    data["weighted_midpoint"] = (
+        (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
+    ) + (
         (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"])
     )
     data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
     data["time"] = data["Ms_of_day"].apply(lambda c: convert_milliseconds(c))
-    data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d"))
+    data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
+        lambda x: x.strftime("%Y-%m-%d")
+    )
     data["Date3"] = data.Date2 + " " + data.time
     data["datetime"] = pd.to_datetime(data.Date3)
     data.set_index("datetime", inplace=True)
+    data = data.iloc[data.index.indexer_between_time("9:30", "16:00")]
     data.drop(columns=["Date2", "Date3", "Ms_of_day"], inplace=True)
     data.rename(
         columns={
@@ -1338,7 +1531,9 @@ def retrieve_openInterest(
     """
     Interval size in miliseconds. 1 minute is 6000
     """
-    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(
+        strike, float
+    ), f"strike should be type float, recieved {type(strike)}"
     pass_kwargs = {
         "symbol": symbol,
         "end_date": end_date,
@@ -1353,7 +1548,9 @@ def retrieve_openInterest(
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(pass_kwargs, retrieve_openInterest, _type="historical")
+        return resolve_ticker_history(
+            pass_kwargs, retrieve_openInterest, _type="historical"
+        )
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))
     start_date = int(pd.to_datetime(start_date).strftime("%Y%m%d"))
@@ -1402,7 +1599,11 @@ def retrieve_openInterest(
 
     try:
         print(response.url) if print_url else None
-        data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+        data = (
+            pd.read_csv(StringIO(response.text))
+            if proxy is None
+            else pd.read_csv(StringIO(response.json()["data"]))
+        )
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
 
         data["time"] = data["Ms_of_day"].apply(convert_milliseconds)
@@ -1414,7 +1615,9 @@ def retrieve_openInterest(
         data.drop(columns=["Date2", "Date3", "Ms_of_day"], inplace=True)
 
         if data.Datetime.duplicated().any():
-            duplicated_logger.info(f"Duplicated index found for {symbol}, {exp}, {right}, {strike}")
+            duplicated_logger.info(
+                f"Duplicated index found for {symbol}, {exp}, {right}, {strike}"
+            )
             duplicated_logger.info(f"url: {response.url}")
             data = data[~data.Datetime.duplicated(keep="last")]  ## Last timestamp
 
@@ -1435,7 +1638,9 @@ def retrieve_openInterest(
     max_tries=5,
     logger=logger,
 )
-def retrieve_bulk_open_interest(symbol, exp, start_date, end_date, proxy=None, print_url=False, **kwargs):
+def retrieve_bulk_open_interest(
+    symbol, exp, start_date, end_date, proxy=None, print_url=False, **kwargs
+):
     if not proxy:
         proxy = get_proxy_url()
 
@@ -1449,7 +1654,9 @@ def retrieve_bulk_open_interest(symbol, exp, start_date, end_date, proxy=None, p
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(pass_kwargs, retrieve_bulk_open_interest, _type="snapshot")
+        return resolve_ticker_history(
+            pass_kwargs, retrieve_bulk_open_interest, _type="snapshot"
+        )
 
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d")) if exp else 0
@@ -1480,7 +1687,11 @@ def retrieve_bulk_open_interest(symbol, exp, start_date, end_date, proxy=None, p
         logger.info(f"Response time: {end_timer - start_timer}")
         logger.info(f"Response URL: {response.url}")
 
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
     if not __isSuccesful(response.status_code):
         logger.error("")
         logger.error("Error in retrieve_openInterest")
@@ -1493,7 +1704,9 @@ def retrieve_bulk_open_interest(symbol, exp, start_date, end_date, proxy=None, p
         print(response.url) if print_url else None
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
         data["time"] = data["Ms_of_day"].apply(convert_milliseconds)
-        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d"))
+        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
+            lambda x: x.strftime("%Y-%m-%d")
+        )
         data["Date3"] = data.Date2
         data["Datetime"] = pd.to_datetime(data.Date3)
         data.drop(columns=["Date2", "Date3", "Ms_of_day"], inplace=True)
@@ -1523,7 +1736,9 @@ async def retrieve_openInterest_async(
     """
     Interval size in miliseconds. 1 minute is 6000
     """
-    assert isinstance(strike, float), f"strike should be type float, recieved {type(strike)}"
+    assert isinstance(
+        strike, float
+    ), f"strike should be type float, recieved {type(strike)}"
     if not proxy:
         proxy = get_proxy_url()
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
@@ -1568,10 +1783,16 @@ async def retrieve_openInterest_async(
         return
 
     print(response.url) if print_url else None
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
     data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
     data["time"] = data["Ms_of_day"].apply(convert_milliseconds)
-    data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d"))
+    data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
+        lambda x: x.strftime("%Y-%m-%d")
+    )
     data["Date3"] = data.Date2
     data["Datetime"] = pd.to_datetime(data.Date3)
     data.drop(columns=["Date2", "Date3", "Ms_of_day"], inplace=True)
@@ -1616,13 +1837,19 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
             try:
                 datetime_col_name = kwargs["datetime_col_name"]
             except KeyError:
-                logger.critical("`datetime_col_name` not provided for multi index resample, setting to `Datetime`")
+                logger.critical(
+                    "`datetime_col_name` not provided for multi index resample, setting to `Datetime`"
+                )
                 datetime_col_name = "Datetime"
 
-            return _handle_multi_index_resample(data, datetime_col_name, interval, resample_col=custom_agg_columns)
+            return _handle_multi_index_resample(
+                data, datetime_col_name, interval, resample_col=custom_agg_columns
+            )
 
         else:
-            raise NotImplementedError("Currently only supports multi index with 2 levels")
+            raise NotImplementedError(
+                "Currently only supports multi index with 2 levels"
+            )
 
     string, integer = extract_numeric_value(interval)
     TIMEFRAME_MAP = {
@@ -1654,7 +1881,9 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
             "weighted_midpoint": "last",
         }
 
-    assert string in TIMEFRAME_MAP.keys(), f"Available Timeframe Alias are {TIMEFRAME_MAP.keys()}, recieved '{string}'"
+    assert (
+        string in TIMEFRAME_MAP.keys()
+    ), f"Available Timeframe Alias are {TIMEFRAME_MAP.keys()}, recieved '{string}'"
 
     ## Add EOD time if DateTimeIndex is EOD Series (Dunno why I did this, so taking it for now)
     ## If I remember, will write it here.
@@ -1663,7 +1892,9 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
 
         for col in data.columns:
             if col.lower() in columns.keys():  ## Standard Column Resample
-                resampled.append(resample(data[col], interval, method=columns[col.lower()]))
+                resampled.append(
+                    resample(data[col], interval, method=columns[col.lower()])
+                )
             else:
                 resampled.append(resample(data[col], interval, method=method))
         data = pd.concat(resampled, axis=1)
@@ -1672,9 +1903,13 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
 
     elif isinstance(data, pd.Series):
         if string == "h":
-            data = data.resample(f"{integer * 60}T", origin=PRICING_CONFIG["MARKET_OPEN_TIME"]).__getattr__(method)()
+            data = data.resample(
+                f"{integer * 60}T", origin=PRICING_CONFIG["MARKET_OPEN_TIME"]
+            ).__getattr__(method)()
         else:
-            data = data.resample(f"{integer}{TIMEFRAME_MAP[string]}").__getattr__(method)()
+            data = data.resample(f"{integer}{TIMEFRAME_MAP[string]}").__getattr__(
+                method
+            )()
         return enforce_bus_hours(data.fillna(0))
 
 
@@ -1694,7 +1929,9 @@ def _handle_multi_index_resample(
         interval: The interval to resample to
         resample_col: The column to resample
     """
-    assert len(data.index.names) == 2, f"Currently only supports multi index with 2 levels, got {len(data.index.names)}"
+    assert (
+        len(data.index.names) == 2
+    ), f"Currently only supports multi index with 2 levels, got {len(data.index.names)}"
 
     ## Save the order of the MultiIndex
     idx_names = list(data.index.names)
@@ -1775,11 +2012,19 @@ def retrieve_option_ohlc(
         response = request_from_proxy(url, querystring, proxy)
     else:
         response = requests.get(url, headers=headers, params=querystring)
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
     if __isSuccesful(response.status_code):
         if (len(data.columns)) > 1:
             data["mean_volume"] = data.groupby("date")["volume"].transform("mean")
-            data = data.loc[data.groupby("date")["volume"].apply(lambda x: (x - x.mean()).abs().idxmin())]
+            data = data.loc[
+                data.groupby("date")["volume"].apply(
+                    lambda x: (x - x.mean()).abs().idxmin()
+                )
+            ]
             data = data.drop_duplicates(subset="date", keep="last")
             data = data.drop(columns=["mean_volume"])
             data["date"] = pd.to_datetime(data["date"], format="%Y%m%d")
@@ -1849,7 +2094,9 @@ def retrieve_chain_bulk(
     headers = {"Accept": "application/json"}
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
-        return resolve_ticker_history(pass_kwargs, retrieve_chain_bulk, _type="snapshot")
+        return resolve_ticker_history(
+            pass_kwargs, retrieve_chain_bulk, _type="snapshot"
+        )
 
     start_timer = time.time()
 
@@ -1864,7 +2111,11 @@ def retrieve_chain_bulk(
         raise_thetadata_exception(response, querystring, proxy)
         response_url = response.url
         print(response_url) if print_url else None
-    data = pd.read_csv(StringIO(response.text)) if proxy is None else pd.read_csv(StringIO(response.json()["data"]))
+    data = (
+        pd.read_csv(StringIO(response.text))
+        if proxy is None
+        else pd.read_csv(StringIO(response.json()["data"]))
+    )
     end_timer = time.time()
     if (end_timer - start_timer) > 4:
         logger.info("")
@@ -1882,11 +2133,17 @@ def retrieve_chain_bulk(
         data.columns = data.columns.str.lower()
         data["midpoint"] = data[["bid", "ask"]].sum(axis=1) / 2
         data["weighted_midpoint"] = (
-            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["ask"])
-        ) + ((data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1)) * (data["bid"]))
+            (data["ask_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
+            * (data["ask"])
+        ) + (
+            (data["bid_size"] / data[["bid_size", "ask_size"]].sum(axis=1))
+            * (data["bid"])
+        )
         data.rename(columns={x: x.capitalize() for x in data.columns}, inplace=True)
 
-        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(lambda x: x.strftime("%Y-%m-%d"))
+        data["Date2"] = pd.to_datetime(data.Date.astype(str)).apply(
+            lambda x: x.strftime("%Y-%m-%d")
+        )
         data["Date3"] = data.Date2
         data["Expiration"] = pd.to_datetime(data.Expiration, format="%Y%m%d")
         data["Strike"] = data.Strike / 1000

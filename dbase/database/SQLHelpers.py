@@ -31,9 +31,7 @@ from sqlalchemy import (
 
 from .db_utils import (
     get_database_name,
-    Database,
-    get_current_environment,
-    get_current_branch_name,
+    Database
 )
 from trade.helpers.helper import setup_logger
 from trade import register_signal
@@ -769,7 +767,6 @@ class DatabaseAdapter:
 
         # Update query if it contains database references
         query = _rewrite_query_database_names(query, db, get_database_name(db))
-
         return query_database(db, table_name, query)
 
     def __filter_data(self, data):
@@ -781,7 +778,7 @@ class DatabaseAdapter:
         na_cols = data.isna().any(axis=0)
 
         logger.info("Columns with NaN") if na_rows else None
-        logger.info(na_cols[na_cols == True]) if na_rows else None
+        logger.info(na_cols[na_cols == True]) if na_rows else None # noqa
         logger.error(f"Rows with at least one NA: {na_rows}") if na_rows else None
 
         dup_rows = data.duplicated().sum()
@@ -793,7 +790,7 @@ class DatabaseAdapter:
 
         ## Ensure no duplicate columns
         data.columns = data.columns.str.lower()
-        occurence = dict(zip(data.columns, [0 for _ in range(len(data.columns))]))
+        occurence = dict(zip(data.columns, [0 for _ in range(len(data.columns))])) # noqa
         ## Tag only second columns of duplicated
         for j, i in enumerate(data.columns):
             occurence[i] += 1
