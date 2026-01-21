@@ -225,17 +225,13 @@ if get_use_v2():
         retrieve_bulk_open_interest,
         retrieve_chain_bulk,
         list_contracts,
+        list_dates
     )
 
     ## V2 does not support bulk realtime quotes
     def retrieve_bulk_quote_rt(*args, **kwargs):
         logger.warning("Bulk realtime quotes not supported in V2 ThetaData API")
         return None
-
-    ## V2 does not support listing dates
-    def list_dates(*args, **kwargs):
-        logger.warning("Listing dates not supported in V2 ThetaData API")
-        return np.array([])
 
 else:
     logger.info("Using V3 of the ThetaData API")
