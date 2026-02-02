@@ -505,8 +505,9 @@ def convert_string_interval_to_miliseconds(timeframe_str: str) -> int:
     return num * length_in_ms * 1000
 
 
+
 def _handle_opttick_param(
-    strike: float = None, right: str = None, symbol: str = None, exp: str = None, opttick: str = None
+    strike: float = None, right: str = None, symbol: str = None, exp: str = None, opttick: str = None, enforce_single_option: bool = False
 ) -> Tuple[float, str, str, str]:
     """Helper function to parse and validate option tick parameters.
 
@@ -529,6 +530,8 @@ def _handle_opttick_param(
         parsed_symbol, parsed_right, parsed_exp, parsed_strike = parse_option_tick(opttick).values()
         return parsed_strike, parsed_right, parsed_symbol, parsed_exp
     else:
+        if not _all_is_provided(strike=strike, right=right, symbol=symbol, exp=exp):
+            raise ValueError("When 'opttick' is not provided, all of 'strike', 'right', 'symbol', and 'exp' must be provided.")
         return strike, right, symbol, exp
 
 

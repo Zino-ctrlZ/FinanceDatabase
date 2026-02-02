@@ -195,7 +195,6 @@ from .utils import (
 )
 from dbase.utils import enforce_bus_hours, add_eod_timestamp
 import pandas as pd
-import numpy as np
 from ..ThetaExceptions import raise_thetadata_exception
 import os
 from trade.helpers.Logging import setup_logger

@@ -410,6 +410,29 @@ def resolve_ticker_history(kwargs, _callable, _type="historical"):
         )
         return _callable(**new_tick_kwargs)
 
+    elif _type == "list_dates":
+        
+        ## No date args. Just direct call with passed args. Returns list, so we join results
+        tick = kwargs["symbol"]
+        change_date = TICK_CHANGE_ALIAS[tick][-1]
+        old_tick = TICK_CHANGE_ALIAS[tick][0]
+        new_tick = TICK_CHANGE_ALIAS[tick][1]
+        old_tick_kwargs = deepcopy(kwargs)
+        new_tick_kwargs = deepcopy(kwargs)
+        old_tick_kwargs["symbol"] = old_tick
+        new_tick_kwargs["symbol"] = new_tick
+        try:
+            old_dates = _callable(**old_tick_kwargs)
+        except ThetaDataNotFound:
+            old_dates = []
+        try:
+            new_dates = _callable(**new_tick_kwargs)
+        except ThetaDataNotFound:
+            new_dates = []
+        full_dates = list(set(old_dates + new_dates))
+        full_dates.sort()
+        return full_dates
+
 
 def request_from_proxy(thetaUrl, queryparam, instanceUrl, print_url=False):
     request_string = f"{thetaUrl}?{'&'.join([f'{key}={value}' for key, value in queryparam.items()])}"
@@ -1328,7 +1351,7 @@ def list_dates(
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
 
-        return resolve_ticker_history(pass_kwargs, list_dates, _type="historical")
+        return resolve_ticker_history(pass_kwargs, list_dates, _type="list_dates")
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))
     strike *= 1000
     strike = int(strike)

@@ -131,11 +131,12 @@ def get_headers():
     }
 
 
-def get_trading_client(paper: bool = True):
+def get_trading_client(paper: bool = True, raw_data: bool = False) -> TradingClient:
     return TradingClient(
         get_alpaca_key(),
         get_alpaca_secret(),
         paper=paper,
+        raw_data=raw_data,
     )
 
 
