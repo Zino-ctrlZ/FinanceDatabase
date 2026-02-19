@@ -402,6 +402,7 @@ def resolve_ticker_history(kwargs, _callable, _type="historical"):
         new_tick = TICK_CHANGE_ALIAS[tick][1]
         new_tick_kwargs = deepcopy(kwargs)
         new_tick_kwargs["symbol"] = (
+            
             old_tick
             if compare_dates.is_before(
                 pd.Timestamp(kwargs["start_date"]), pd.Timestamp(change_date)
