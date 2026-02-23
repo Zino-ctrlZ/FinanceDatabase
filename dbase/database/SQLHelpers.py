@@ -155,7 +155,7 @@ def _dispose_all_engines(*args, **kwargs):
                 f.write(f"Engine disposed: {str(pid)} on {datetime.now()}\n")
         except Exception as e:
             if not os.path.exists(f'{os.environ["DBASE_DIR"]}/logs/atexit.log'):
-                os.makedirs(f'{os.environ["DBASE_DIR"]}/logs/atexit.log')
+                os.makedirs(f'{os.environ["DBASE_DIR"]}/logs', exist_ok=True)
 
             with open(f'{os.environ["DBASE_DIR"]}/logs/atexit.log', "a") as f:
                 f.write(
