@@ -100,9 +100,9 @@ Constants for database base names:
 
 - Clears the database name resolution cache
 
-### SchemaCloning.py
+### db_management.py
 
-Schema cloning functions for creating test database environments.
+Database management functions for creating test database environments.
 
 #### Key Functions
 
@@ -132,6 +132,27 @@ Schema cloning functions for creating test database environments.
 - Lists all unique environments from `master_config.database_configs`
 - By default excludes production environment
 - Returns sorted list of environment names
+
+#### Environment diff and sync
+
+**`diff_environments(source_environment, target_environment)`**
+
+- Compares two environments: what databases and tables does the target lack relative to the source?
+- Returns `EnvironmentDiff` with `missing_databases` (base_name -> source DB name) and `table_differences` (per-base tables missing in target).
+
+**`EnvironmentDiff`**
+
+- Dataclass: `source_environment`, `target_environment`, `missing_databases: dict[str, str]`, `table_differences: dict[str, dict]`.
+
+**`sync_environment_from_source(source_environment, target_environment, branch_name, ...)`**
+
+- One-shot: create missing databases and add missing tables in target from source.
+- **Dry run by default** (`apply=False`). Set `apply=True` to perform changes.
+- Returns created_databases, failed_databases, synced_tables, failed_tables (partial success on failures).
+
+**`create_missing_databases_from_environment(...)`** / **`sync_missing_tables_from_environment(...)`**
+
+- Lower-level helpers; both default to dry run (`apply=False`).
 
 ## Usage Examples
 
@@ -262,19 +283,19 @@ Resolved Name: 'portfolio_data_test-mean-reversion'
 
 ## CLI Usage
 
-The `SchemaCloning.py` module provides a command-line interface for managing test environments:
+The db_management.py module provides a command-line interface for managing test environments:
 
 ### Creating Test Environments
 
 ```bash
 # Create a test environment
-python dbase/database/SchemaCloning.py create \
+python dbase/database/db_management.py create \
     --env mean-reversion \
     --branch feature-branch \
     --schema-only
 
 # Create with data
-python dbase/database/SchemaCloning.py create \
+python dbase/database/db_management.py create \
     --env mean-reversion \
     --branch feature-branch \
     --with-data
@@ -302,6 +323,33 @@ python dbase/database/db_management.py delete \
     --delete-env test-mean-reversion \
     --confirm
 ```
+
+### Diff and sync (environment comparison)
+
+```bash
+# Show what target env is missing vs source (no changes)
+python -m dbase.database.db_management diff --source-env long_bbands --target-env test
+
+# Sync: dry run (default; no changes)
+python -m dbase.database.db_management sync \
+    --source-env long_bbands \
+    --target-env test
+
+# Sync: apply changes (create missing DBs and tables)
+python -m dbase.database.db_management sync \
+    --source-env long_bbands \
+    --target-env test \
+    --apply
+
+# Optionally include a branch name for audit/metadata in master_config
+python -m dbase.database.db_management sync \
+    --source-env long_bbands \
+    --target-env test \
+    --branch test-branch \
+    --apply
+```
+
+- Sync is **dry run by default**; use `--apply` to create missing databases and tables.
 
 **Safety Notes:**
 
