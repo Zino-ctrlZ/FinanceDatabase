@@ -80,7 +80,7 @@ def create_engine_short(db):
     Create a SQLAlchemy engine for the given database.
     """
 
-    return create_engine(f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}")
+    return create_engine(f"mysql+mysqlconnector://{sql_user}:{sql_pw}@{sql_host}/{db}", pool_pre_ping=True, pool_recycle=3600)
 
 
 def create_pymysql_connection(db):
