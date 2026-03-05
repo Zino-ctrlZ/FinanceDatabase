@@ -203,7 +203,10 @@ def check_database_conflict(db_name: str) -> None:
 
 
 def register_database(
-    database_name: str, base_name: str, environment: str, branch_name: str
+    database_name: str,
+    base_name: str,
+    environment: str,
+    branch_name: Optional[str] = None,
 ) -> None:
     """Register a new database in master_config.database_configs."""
     # Validate all inputs
@@ -710,7 +713,7 @@ def delete_environment(
 def create_missing_databases_from_environment(
     source_environment: str,
     target_environment: str,
-    branch_name: str,
+    branch_name: Optional[str] = None,
     schema_only: bool = True,
     apply: bool = False,
 ) -> dict[str, Any]:
@@ -720,7 +723,7 @@ def create_missing_databases_from_environment(
     Args:
         source_environment: Environment to clone from (e.g. 'long_bbands').
         target_environment: Environment to add DBs to (e.g. 'test').
-        branch_name: Branch name for registration.
+        branch_name: Optional branch name for registration (stored in master_config).
         schema_only: If True, clone schema only; if False, clone schema + data.
         apply: If False (default), dry run: return structure with no changes. If True, perform creates.
 
@@ -871,7 +874,7 @@ def sync_missing_tables_from_environment(
 def sync_environment_from_source(
     source_environment: str,
     target_environment: str,
-    branch_name: str,
+    branch_name: Optional[str] = None,
     schema_only: bool = True,
     copy_table_data: bool = False,
     sync_databases: bool = True,
@@ -884,7 +887,7 @@ def sync_environment_from_source(
     Args:
         source_environment: Source env (e.g. 'long_bbands').
         target_environment: Target env (e.g. 'test').
-        branch_name: Branch name for new DB registration.
+        branch_name: Optional branch name for new DB registration (stored in master_config).
         schema_only: For new DBs, clone schema only (default True).
         copy_table_data: For new tables, copy data (default False).
         sync_databases: If True, create missing databases when apply=True.
