@@ -80,7 +80,7 @@ def get_databases_for_environment(environment: str) -> dict[str, str]:
     if result.empty:
         return {}
 
-    return dict(zip(result["base_name"], result["database_name"])) # noqa
+    return dict(zip(result["base_name"], result["database_name"]))  # noqa
 
 
 def get_tables_for_database(database_name: str) -> list[str]:
@@ -124,7 +124,9 @@ class EnvironmentDiff:
     source_environment: str
     target_environment: str
     missing_databases: dict[str, str]  # base_name -> source_database_name
-    table_differences: dict[str, dict[str, Any]]  # base_name -> {source_database, target_database, tables_missing_in_target}
+    table_differences: dict[
+        str, dict[str, Any]
+    ]  # base_name -> {source_database, target_database, tables_missing_in_target}
 
 
 def diff_environments(
@@ -147,9 +149,7 @@ def diff_environments(
     target = get_databases_for_environment(target_environment)
 
     missing_databases = {
-        base: source_db
-        for base, source_db in source.items()
-        if base not in target
+        base: source_db for base, source_db in source.items() if base not in target
     }
 
     common_bases = set(source) & set(target)
@@ -744,7 +744,9 @@ def create_missing_databases_from_environment(
         try:
             check_database_conflict(target_db_name)
             clone_database_schema(source_db, target_db_name, schema_only=schema_only)
-            register_database(target_db_name, base_name, target_environment, branch_name)
+            register_database(
+                target_db_name, base_name, target_environment, branch_name
+            )
             created[base_name] = target_db_name
         except Exception as e:
             failed[base_name] = str(e)
@@ -841,7 +843,11 @@ def sync_missing_tables_from_environment(
     failed_tables: dict[str, dict[str, str]] = {}
 
     if not apply:
-        return {"synced_tables": synced_tables, "failed_tables": failed_tables, "dry_run": True}
+        return {
+            "synced_tables": synced_tables,
+            "failed_tables": failed_tables,
+            "dry_run": True,
+        }
 
     for base_name, details in diff.table_differences.items():
         source_db = details["source_database"]
@@ -855,7 +861,11 @@ def sync_missing_tables_from_environment(
         if result["failed"]:
             failed_tables[base_name] = result["failed"]
 
-    return {"synced_tables": synced_tables, "failed_tables": failed_tables, "dry_run": False}
+    return {
+        "synced_tables": synced_tables,
+        "failed_tables": failed_tables,
+        "dry_run": False,
+    }
 
 
 def sync_environment_from_source(
@@ -1139,10 +1149,14 @@ def __main__():
         db_management_logger.info(
             f"Diff source={diff.source_environment} target={diff.target_environment}"
         )
-        db_management_logger.info("Missing databases (base -> source DB): %s", diff.missing_databases)
+        db_management_logger.info(
+            "Missing databases (base -> source DB): %s", diff.missing_databases
+        )
         for base, details in diff.table_differences.items():
             db_management_logger.info(
-                "  %s: tables missing in target: %s", base, details["tables_missing_in_target"]
+                "  %s: tables missing in target: %s",
+                base,
+                details["tables_missing_in_target"],
             )
 
     elif args.command == "sync":
@@ -1163,6 +1177,7 @@ def __main__():
         db_management_logger.info("failed_databases: %s", result["failed_databases"])
         db_management_logger.info("synced_tables: %s", result["synced_tables"])
         db_management_logger.info("failed_tables: %s", result["failed_tables"])
+        db_management_logger.info("diff: %s", result["diff"])
 
     else:
         parser.print_help()
