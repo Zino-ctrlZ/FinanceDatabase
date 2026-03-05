@@ -9,8 +9,10 @@ import os
 import re
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
 
 import pandas as pd
 from sqlalchemy import text
@@ -78,7 +80,102 @@ def get_databases_for_environment(environment: str) -> dict[str, str]:
     if result.empty:
         return {}
 
-    return dict(zip(result["base_name"], result["database_name"])) # noqa
+    return dict(zip(result["base_name"], result["database_name"]))  # noqa
+
+
+def get_tables_for_database(database_name: str) -> list[str]:
+    """
+    List base tables in a database by physical database name (no environment resolution).
+
+    Args:
+        database_name: Physical MySQL database name (e.g. 'portfolio_data' or 'portfolio_data_test').
+
+    Returns:
+        Sorted list of table names (BASE TABLE only, no views).
+    """
+    validate_database_input(database_name)
+
+    query = text("""
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = :db
+          AND table_type = 'BASE TABLE'
+    """)
+    engine = get_engine("master_config")
+    result = pd.read_sql(query, engine, params={"db": database_name})
+
+    if result.empty:
+        return []
+
+    # Use first column: MySQL may return TABLE_NAME (uppercase) depending on driver
+    col = result.columns[0]
+    return sorted(result[col].tolist())
+
+
+@dataclass
+class EnvironmentDiff:
+    """
+    Difference between two environments: what the target lacks vs the source.
+
+    - missing_databases: base_name -> source database name (DBs that exist in source but not in target).
+    - table_differences: for bases present in both, tables that exist in source but not in target.
+    """
+
+    source_environment: str
+    target_environment: str
+    missing_databases: dict[str, str]  # base_name -> source_database_name
+    table_differences: dict[
+        str, dict[str, Any]
+    ]  # base_name -> {source_database, target_database, tables_missing_in_target}
+
+
+def diff_environments(
+    source_environment: str, target_environment: str
+) -> EnvironmentDiff:
+    """
+    Compare two environments: what databases and tables does target lack relative to source?
+
+    Args:
+        source_environment: Reference environment (e.g. 'long_bbands').
+        target_environment: Environment to compare (e.g. 'test').
+
+    Returns:
+        EnvironmentDiff with missing_databases and table_differences.
+    """
+    validate_database_input(source_environment)
+    validate_database_input(target_environment)
+
+    source = get_databases_for_environment(source_environment)
+    target = get_databases_for_environment(target_environment)
+
+    missing_databases = {
+        base: source_db for base, source_db in source.items() if base not in target
+    }
+
+    common_bases = set(source) & set(target)
+    table_differences: dict[str, dict[str, Any]] = {}
+
+    for base in common_bases:
+        source_db = source[base]
+        target_db = target[base]
+
+        source_tables = set(get_tables_for_database(source_db))
+        target_tables = set(get_tables_for_database(target_db))
+        missing_tables = sorted(source_tables - target_tables)
+
+        if missing_tables:
+            table_differences[base] = {
+                "source_database": source_db,
+                "target_database": target_db,
+                "tables_missing_in_target": missing_tables,
+            }
+
+    return EnvironmentDiff(
+        source_environment=source_environment,
+        target_environment=target_environment,
+        missing_databases=missing_databases,
+        table_differences=table_differences,
+    )
 
 
 def check_database_conflict(db_name: str) -> None:
@@ -106,7 +203,10 @@ def check_database_conflict(db_name: str) -> None:
 
 
 def register_database(
-    database_name: str, base_name: str, environment: str, branch_name: str
+    database_name: str,
+    base_name: str,
+    environment: str,
+    branch_name: Optional[str] = None,
 ) -> None:
     """Register a new database in master_config.database_configs."""
     # Validate all inputs
@@ -610,6 +710,236 @@ def delete_environment(
     return deleted
 
 
+def create_missing_databases_from_environment(
+    source_environment: str,
+    target_environment: str,
+    branch_name: Optional[str] = None,
+    schema_only: bool = True,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """
+    Create in target environment any databases that exist in source but not in target.
+
+    Args:
+        source_environment: Environment to clone from (e.g. 'long_bbands').
+        target_environment: Environment to add DBs to (e.g. 'test').
+        branch_name: Optional branch name for registration (stored in master_config).
+        schema_only: If True, clone schema only; if False, clone schema + data.
+        apply: If False (default), dry run: return structure with no changes. If True, perform creates.
+
+    Returns:
+        dict with keys: created (base_name -> target_db_name), failed (base_name -> error message), dry_run (bool).
+    """
+    validate_database_input(source_environment)
+    validate_database_input(target_environment)
+    if branch_name:
+        validate_database_input(branch_name)
+
+    diff = diff_environments(source_environment, target_environment)
+    created: dict[str, str] = {}
+    failed: dict[str, str] = {}
+
+    if not apply:
+        return {"created": created, "failed": failed, "dry_run": True}
+
+    for base_name, source_db in diff.missing_databases.items():
+        target_db_name = f"{base_name}_{target_environment}"
+        try:
+            check_database_conflict(target_db_name)
+            clone_database_schema(source_db, target_db_name, schema_only=schema_only)
+            register_database(
+                target_db_name, base_name, target_environment, branch_name
+            )
+            created[base_name] = target_db_name
+        except Exception as e:
+            failed[base_name] = str(e)
+            db_management_logger.warning(
+                f"Failed to create database '{target_db_name}' from '{source_db}': {e}"
+            )
+
+    return {"created": created, "failed": failed, "dry_run": False}
+
+
+def sync_missing_tables_between_databases(
+    source_db: str,
+    target_db: str,
+    tables: list[str],
+    copy_data: bool = False,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """
+    Create missing tables in target DB from source (CREATE TABLE ... LIKE; optionally INSERT).
+
+    Args:
+        source_db: Source physical database name.
+        target_db: Target physical database name.
+        tables: List of table names to create in target (and optionally copy data).
+        copy_data: If True, copy data into new tables; default False (schema only).
+        apply: If False (default), dry run. If True, perform creates.
+
+    Returns:
+        dict with keys: synced (list of table names), failed (table_name -> error message), dry_run (bool).
+    """
+    validate_database_input(source_db)
+    validate_database_input(target_db)
+    for tbl in tables:
+        validate_database_input(tbl)
+
+    synced: list[str] = []
+    failed: dict[str, str] = {}
+
+    if not apply:
+        return {"synced": synced, "failed": failed, "dry_run": True}
+
+    engine = get_engine("master_config")
+    for tbl in tables:
+        try:
+            with engine.begin() as conn:
+                # CREATE TABLE target.tbl LIKE source.tbl (identifiers validated above)
+                conn.execute(
+                    text(
+                        f"CREATE TABLE IF NOT EXISTS `{target_db}`.`{tbl}` "
+                        f"LIKE `{source_db}`.`{tbl}`"
+                    )
+                )
+                if copy_data:
+                    conn.execute(
+                        text(
+                            f"INSERT INTO `{target_db}`.`{tbl}` "
+                            f"SELECT * FROM `{source_db}`.`{tbl}`"
+                        )
+                    )
+            synced.append(tbl)
+        except Exception as e:
+            failed[tbl] = str(e)
+            db_management_logger.warning(
+                f"Failed to sync table '{tbl}' from {source_db} to {target_db}: {e}"
+            )
+
+    return {"synced": synced, "failed": failed, "dry_run": False}
+
+
+def sync_missing_tables_from_environment(
+    source_environment: str,
+    target_environment: str,
+    copy_data: bool = False,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """
+    Add missing tables in target env from source (for DBs that exist in both).
+
+    Args:
+        source_environment: Source environment (e.g. 'long_bbands').
+        target_environment: Target environment (e.g. 'test').
+        copy_data: If True, copy data into new tables; default False.
+        apply: If False (default), dry run. If True, perform sync.
+
+    Returns:
+        dict with keys: synced_tables (base_name -> list of table names),
+        failed_tables (base_name -> {table_name: error}), dry_run (bool).
+    """
+    validate_database_input(source_environment)
+    validate_database_input(target_environment)
+
+    diff = diff_environments(source_environment, target_environment)
+    synced_tables: dict[str, list[str]] = {}
+    failed_tables: dict[str, dict[str, str]] = {}
+
+    if not apply:
+        return {
+            "synced_tables": synced_tables,
+            "failed_tables": failed_tables,
+            "dry_run": True,
+        }
+
+    for base_name, details in diff.table_differences.items():
+        source_db = details["source_database"]
+        target_db = details["target_database"]
+        missing = details["tables_missing_in_target"]
+
+        result = sync_missing_tables_between_databases(
+            source_db, target_db, missing, copy_data=copy_data, apply=True
+        )
+        synced_tables[base_name] = result["synced"]
+        if result["failed"]:
+            failed_tables[base_name] = result["failed"]
+
+    return {
+        "synced_tables": synced_tables,
+        "failed_tables": failed_tables,
+        "dry_run": False,
+    }
+
+
+def sync_environment_from_source(
+    source_environment: str,
+    target_environment: str,
+    branch_name: Optional[str] = None,
+    schema_only: bool = True,
+    copy_table_data: bool = False,
+    sync_databases: bool = True,
+    sync_tables: bool = True,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """
+    One-shot: diff then optionally create missing DBs and sync missing tables in target from source.
+
+    Args:
+        source_environment: Source env (e.g. 'long_bbands').
+        target_environment: Target env (e.g. 'test').
+        branch_name: Optional branch name for new DB registration (stored in master_config).
+        schema_only: For new DBs, clone schema only (default True).
+        copy_table_data: For new tables, copy data (default False).
+        sync_databases: If True, create missing databases when apply=True.
+        sync_tables: If True, add missing tables when apply=True.
+        apply: If False (default), dry run; no changes. If True, perform sync.
+
+    Returns:
+        dict with: diff (EnvironmentDiff), created_databases, failed_databases,
+        synced_tables, failed_tables, dry_run.
+    """
+    validate_database_input(source_environment)
+    validate_database_input(target_environment)
+    if branch_name:
+        validate_database_input(branch_name)
+
+    diff = diff_environments(source_environment, target_environment)
+    result: dict[str, Any] = {
+        "diff": diff,
+        "created_databases": {},
+        "failed_databases": {},
+        "synced_tables": {},
+        "failed_tables": {},
+        "dry_run": not apply,
+    }
+
+    if not apply:
+        return result
+
+    if sync_databases and diff.missing_databases:
+        db_result = create_missing_databases_from_environment(
+            source_environment,
+            target_environment,
+            branch_name=branch_name,
+            schema_only=schema_only,
+            apply=True,
+        )
+        result["created_databases"] = db_result["created"]
+        result["failed_databases"] = db_result["failed"]
+
+    if sync_tables and diff.table_differences:
+        tbl_result = sync_missing_tables_from_environment(
+            source_environment,
+            target_environment,
+            copy_data=copy_table_data,
+            apply=True,
+        )
+        result["synced_tables"] = tbl_result["synced_tables"]
+        result["failed_tables"] = tbl_result["failed_tables"]
+
+    return result
+
+
 def create_test_environment(
     environment: str,
     branch_name: str,
@@ -725,6 +1055,45 @@ def __main__():
         help="Skip confirmation prompt and proceed with deletion.",
     )
 
+    # Diff command: compare two environments
+    diff_parser = subparsers.add_parser(
+        "diff", help="Show what target env is missing vs source (DBs and tables)."
+    )
+    diff_parser.add_argument(
+        "--source-env",
+        required=True,
+        help="Source environment (e.g. long_bbands).",
+    )
+    diff_parser.add_argument(
+        "--target-env",
+        required=True,
+        help="Target environment (e.g. test).",
+    )
+
+    # Sync command: create missing DBs and tables in target from source (dry run unless --apply)
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="Create missing DBs and tables in target from source. Dry run unless --apply.",
+    )
+    sync_parser.add_argument("--source-env", required=True, help="Source environment.")
+    sync_parser.add_argument("--target-env", required=True, help="Target environment.")
+    sync_parser.add_argument(
+        "--branch",
+        required=False,
+        default=None,
+        help="Optional branch name for new DB registration (stored in master_config).",
+    )
+    sync_parser.add_argument(
+        "--with-data",
+        action="store_true",
+        help="Copy data for new tables and new DBs (default: schema only).",
+    )
+    sync_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply changes. Default is dry run.",
+    )
+
     args = parser.parse_args()
 
     if args.command == "create":
@@ -777,6 +1146,41 @@ def __main__():
                 db_management_logger.info(f"  - {env}")
         else:
             db_management_logger.info("No non-production environments found.")
+
+    elif args.command == "diff":
+        diff = diff_environments(args.source_env, args.target_env)
+        db_management_logger.info(
+            f"Diff source={diff.source_environment} target={diff.target_environment}"
+        )
+        db_management_logger.info(
+            "Missing databases (base -> source DB): %s", diff.missing_databases
+        )
+        for base, details in diff.table_differences.items():
+            db_management_logger.info(
+                "  %s: tables missing in target: %s",
+                base,
+                details["tables_missing_in_target"],
+            )
+
+    elif args.command == "sync":
+        if not args.apply:
+            db_management_logger.info("Dry run; use --apply to apply changes.")
+        result = sync_environment_from_source(
+            source_environment=args.source_env,
+            target_environment=args.target_env,
+            branch_name=args.branch,
+            schema_only=not args.with_data,
+            copy_table_data=args.with_data,
+            sync_databases=True,
+            sync_tables=True,
+            apply=args.apply,
+        )
+        db_management_logger.info("dry_run: %s", result["dry_run"])
+        db_management_logger.info("created_databases: %s", result["created_databases"])
+        db_management_logger.info("failed_databases: %s", result["failed_databases"])
+        db_management_logger.info("synced_tables: %s", result["synced_tables"])
+        db_management_logger.info("failed_tables: %s", result["failed_tables"])
+        db_management_logger.info("diff: %s", result["diff"])
 
     else:
         parser.print_help()
