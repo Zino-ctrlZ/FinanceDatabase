@@ -210,6 +210,7 @@ from trade.helpers.helper import parse_option_tick
 from trade.helpers.Logging import setup_logger
 from typing import Tuple
 import re
+from datetime import datetime
 import pandas as pd
 from copy import deepcopy
 from trade import PRICING_CONFIG
@@ -218,6 +219,8 @@ from dbase.utils import enforce_bus_hours
 from .log import _submit_log
 
 logger = setup_logger("dbase.DataAPI.ThetaData.utils")
+## Define the earliest date for which ThetaData provides data (8 years ago from current year)
+THETA_FIRST_ALLOW_DATE = datetime(datetime.now().year - 8, 1, 1)
 
 
 def is_theta_data_retrieval_successful(response):
@@ -247,9 +250,9 @@ def identify_length(string, integer, rt=False):
         TIMEFRAMES_VALUES = {"m": 1, "h": 60, "d": 60 * 24, "w": 60 * 24 * 7}
     else:
         TIMEFRAMES_VALUES = {"d": 1, "w": 5, "m": 30, "y": 252, "q": 91}
-    assert (
-        string in TIMEFRAMES_VALUES.keys()
-    ), f'Available timeframes are {TIMEFRAMES_VALUES.keys()}, recieved "{string}"'
+    assert string in TIMEFRAMES_VALUES.keys(), (
+        f'Available timeframes are {TIMEFRAMES_VALUES.keys()}, recieved "{string}"'
+    )
     return integer * TIMEFRAMES_VALUES[string]
 
 
@@ -505,9 +508,13 @@ def convert_string_interval_to_miliseconds(timeframe_str: str) -> int:
     return num * length_in_ms * 1000
 
 
-
 def _handle_opttick_param(
-    strike: float = None, right: str = None, symbol: str = None, exp: str = None, opttick: str = None, enforce_single_option: bool = False
+    strike: float = None,
+    right: str = None,
+    symbol: str = None,
+    exp: str = None,
+    opttick: str = None,
+    enforce_single_option: bool = False,
 ) -> Tuple[float, str, str, str]:
     """Helper function to parse and validate option tick parameters.
 
@@ -531,7 +538,9 @@ def _handle_opttick_param(
         return parsed_strike, parsed_right, parsed_symbol, parsed_exp
     else:
         if not _all_is_provided(strike=strike, right=right, symbol=symbol, exp=exp):
-            raise ValueError("When 'opttick' is not provided, all of 'strike', 'right', 'symbol', and 'exp' must be provided.")
+            raise ValueError(
+                "When 'opttick' is not provided, all of 'strike', 'right', 'symbol', and 'exp' must be provided."
+            )
         return strike, right, symbol, exp
 
 
@@ -549,17 +558,46 @@ def request_from_proxy(thetaUrl, queryparam, instanceUrl, print_url=False):
     return response
 
 
-def _fetch_data(theta_url: str, params: dict, print_url: bool = False) -> str:
+def _fetch_data(theta_url: str, params: dict, print_url: bool = False, dry_run: bool = None) -> str:
     """
     Fetch data from ThetaData API, using proxy if available.
+
+    Supports dry-run mode for testing without ThetaData Terminal running.
+    Set THETADATA_DRY_RUN=true environment variable to enable.
+
     Args:
         theta_url (str): The ThetaData API endpoint URL.
         params (dict): Query parameters for the API request.
         print_url (bool): Whether to print the request URL.
+        dry_run (bool, optional): Force dry-run mode. If None, checks environment variable.
     Returns:
         str: The response data as a string.
     """
+    import os
 
+    # Check if dry-run mode is enabled
+    if dry_run is None:
+        dry_run = os.environ.get("THETADATA_DRY_RUN", "false").lower() == "true"
+
+    # Dry-run mode: return mock data without making actual request
+    if dry_run:
+        logger.info(f"[DRY RUN] Would call: {theta_url}")
+        logger.info(f"[DRY RUN] With params: {params}")
+
+        # Try to import dry_run module for mock responses
+        try:
+            from .tests.dry_run import get_dry_run_response
+
+            mock_data = get_dry_run_response(theta_url, params)
+            if print_url:
+                print(f"[DRY RUN] Request URL: {theta_url}?{params}")
+            return mock_data
+        except ImportError:
+            # Fallback if test module not available
+            logger.warning("[DRY RUN] Mock responses not available, returning minimal data")
+            return "timestamp\n20240101"
+
+    # Normal execution - make actual API request
     instance_url = get_proxy_url()
     if instance_url:
         response = request_from_proxy(theta_url, params, instance_url)

@@ -199,6 +199,8 @@ See Also
 - Utility Functions: dbase.DataAPI._ThetaData.utils
 """
 
+from regex import F
+
 from trade.helpers.Logging import setup_logger
 from trade import reload_pricing_config
 import requests
@@ -335,7 +337,7 @@ def quote_to_eod_patch(
     return q_to_eod
 
 
-def resolve_ticker_history(kwargs, _callable, _type="historical"):
+def resolve_ticker_history(kwargs, _callable, _type="historical", skip_index_filtering=False):
     if _type == "historical":
         tick = kwargs["symbol"]
         change_date = TICK_CHANGE_ALIAS[tick][-1]
@@ -355,11 +357,12 @@ def resolve_ticker_history(kwargs, _callable, _type="historical"):
                 )
                 else None
             )
-            old_tick_data = (
-                old_tick_data[old_tick_data.index.duplicated(keep="first")]
-                if old_tick_data is not None
-                else None
-            )
+            if not skip_index_filtering and old_tick_data is not None:
+                old_tick_data = old_tick_data[
+                    (old_tick_data.index >= pd.Timestamp(kwargs["start_date"]))
+                    & (old_tick_data.index <= pd.Timestamp(kwargs["end_date"]))
+                ]
+        
         except ThetaDataNotFound as e:
             logger.info(
                 f"No data found for Old_tick {old_tick} on {kwargs['start_date']}"
@@ -369,29 +372,31 @@ def resolve_ticker_history(kwargs, _callable, _type="historical"):
 
         ## Retrieve the data for the new tick
         try:
+            use_date = kwargs["exp"] if kwargs.get("exp") else kwargs["end_date"]
             new_tick_data = (
                 _callable(**new_tick_kwargs)
                 if compare_dates.is_on_or_after(
-                    pd.Timestamp(kwargs["exp"]), pd.Timestamp(change_date)
+                    pd.Timestamp(use_date), pd.Timestamp(change_date)
                 )
                 else None
             )  ## Opting for expiration date instead of end date cause data cannot go beyond expiration date
-            new_tick_data = (
-                new_tick_data[~new_tick_data.index.duplicated(keep="first")]
-                if new_tick_data is not None
-                else None
-            )
+            if not skip_index_filtering and new_tick_data is not None:
+                new_tick_data = new_tick_data[
+                    (new_tick_data.index >= pd.Timestamp(kwargs["start_date"]))
+                    & (new_tick_data.index <= pd.Timestamp(kwargs["end_date"]))
+                ]
+        
         except ThetaDataNotFound as e:
-            logger.info(f"No data found for new_tick {new_tick} on {kwargs['exp']}")
+            logger.info(f"No data found for new_tick {new_tick} on {use_date}")
             logger.info(f"Error: {e}")
             new_tick_data = None
 
         ## If no data is found for the old tick, then we will just return the new tick data. Change to dataframe to avoid errors when concatenating
         if old_tick_data is None:
-            logger.info(f"No data found for Old_tick {old_tick}")
+            logger.info(f"No data found for Old_tick {old_tick} on {kwargs['start_date']}")
             old_tick_data = EMPTY_DF_SAMPLES.get(_callable.__name__, pd.DataFrame())
         if new_tick_data is None:
-            logger.info(f"No data found for new_tick {new_tick}")
+            logger.info(f"No data found for new_tick {new_tick} on {use_date}")
             new_tick_data = EMPTY_DF_SAMPLES.get(_callable.__name__, pd.DataFrame())
         full_data = pd.concat([old_tick_data, new_tick_data])
         return full_data
@@ -1044,14 +1049,20 @@ async def retrieve_eod_ohlc_async(
 
 
 ## Migrate to new API
-@backoff.on_exception(
-    backoff.expo,
-    (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
-    max_tries=5,
-    logger=logger,
-)
+# @backoff.on_exception(
+#     backoff.expo,
+#     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
+#     max_tries=5,
+#     logger=logger,
+# )
 def retrieve_bulk_eod(
-    symbol, exp, start_date, end_date, proxy=None, print_url=False, **kwargs
+    symbol, 
+    exp, 
+    start_date, 
+    end_date, 
+    proxy=None, 
+    print_url=False, 
+    **kwargs
 ):
     if not proxy:
         proxy = get_proxy_url()
@@ -1067,11 +1078,11 @@ def retrieve_bulk_eod(
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
         return resolve_ticker_history(
-            pass_kwargs, retrieve_bulk_eod, _type="historical"
+            pass_kwargs, retrieve_bulk_eod, _type="historical", skip_index_filtering=True
         )
 
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
-    exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))
+    exp = int(pd.to_datetime(exp).strftime("%Y%m%d")) if exp else 0
     start_date = int(pd.to_datetime(start_date).strftime("%Y%m%d"))
     url = "http://127.0.0.1:25510/v2/bulk_hist/option/eod"
     querystring = {
@@ -2069,13 +2080,13 @@ def is_theta_data_retrieval_successful(response):
     return not isinstance(response, str)
 
 
-## Migrate to new API
-@backoff.on_exception(
-    backoff.expo,
-    (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
-    max_tries=5,
-    logger=logger,
-)
+# Migrate to new API
+# @backoff.on_exception(
+#     backoff.expo,
+#     (ThetaDataOSLimit, ThetaDataDisconnected, ThetaDataServerRestart),
+#     max_tries=5,
+#     logger=logger,
+# )
 def retrieve_chain_bulk(
     symbol,
     exp,
