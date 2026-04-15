@@ -263,15 +263,32 @@ def set_use_proxy(use_proxy: bool):
 refresh_proxy_url()  ## Refreshing proxy url
 
 
-def ping_proxy():
+def ping_proxy_v2():
+    logger.info("Pinging proxy v2")
     try:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
         payload = {
             "method": "GET",
-            "url": "http://127.0.0.1:25510/v2/hist/option/eod?end_date=20250619&root=AAPL&use_csv=true&exp=20241220&right=C&start_date=20240101&strike=220000",
+            "url": "http://127.0.0.1:25510/v2/stock/list/symbols",
         }
         proxy_url = os.environ["PROXY_URL"]
         response = requests.post(proxy_url, headers=headers, json=payload)
+        return response.status_code == 200
+    except Exception as e:  # noqa
+        return False
+
+
+def ping_proxy_v3():
+    logger.info("Pinging proxy v3")
+    try:
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        payload = {
+            "method": "GET",
+            "url": "http://127.0.0.1:25503/v3/stock/list/symbols",
+        }
+        proxy_url = os.environ["PROXY_URL"]
+        response = requests.post(proxy_url, headers=headers, json=payload)
+        print("v3 response: ", response.json())
         return response.status_code == 200
     except Exception as e:  # noqa
         return False
