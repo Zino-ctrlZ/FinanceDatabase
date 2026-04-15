@@ -184,7 +184,7 @@ Notes
 - Data structures may differ slightly between versions
 """
 
-from .proxy import ping_proxy, set_use_proxy, set_should_schedule, get_proxy_url
+from .proxy import set_use_proxy, set_should_schedule, get_proxy_url
 from .utils import (
     resample,
     bootstrap_ohlc,
@@ -209,6 +209,7 @@ USE_V2 = (
 
 
 def get_use_v2():
+    print(os.environ.get("THETADATA_USE_V3", "didn't see it set").lower())
     return USE_V2
 
 
@@ -224,8 +225,9 @@ if get_use_v2():
         retrieve_bulk_open_interest,
         retrieve_chain_bulk,
         list_contracts,
-        list_dates
+        list_dates,
     )
+    from .proxy import ping_proxy_v2 as ping_proxy
 
     ## V2 does not support bulk realtime quotes
     def retrieve_bulk_quote_rt(*args, **kwargs):
@@ -247,6 +249,7 @@ else:
         _list_contracts as list_contracts,
         _list_dates as list_dates,
     )
+    from .proxy import ping_proxy_v3 as ping_proxy
 
 
 ## Patch function to convert quote data to EOD format if needed
