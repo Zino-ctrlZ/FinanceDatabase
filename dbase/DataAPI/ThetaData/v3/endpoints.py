@@ -436,9 +436,15 @@ def _retrieve_quote_rt(
     exp: str = None,
     right: str = None,
     strike: float = None,
+    start_time: str = None,
+    print_url: bool = False,
+    end_time: str = None,
+    ts: bool = False,
+    proxy: str = None,
+    start_date: str = None,
+    end_date: str = None,
     *,
     opttick: str = None,
-    print_url: bool = False,
     **kwargs,
 ) -> pd.DataFrame:
     """
@@ -458,11 +464,26 @@ def _retrieve_quote_rt(
         Option right ('call' or 'put').
     strike : float
         Strike price of the option.
+    start_time : str
+        Start time for intraday data (for backward compatibility, unused in V3).
+    print_url : bool
+        Whether to print the request URL.
+    end_time : str
+        End time for intraday data (for backward compatibility, unused in V3).
+    ts : bool
+        Time series flag (for backward compatibility, unused in V3).
+    proxy : str
+        Proxy URL for backward compatibility (unused in V3).
+    start_date : str
+        Start date (for backward compatibility, unused in V3).
+    end_date : str
+        End date (for backward compatibility, unused in V3).
     Returns
     -------
     pd.DataFrame
         DataFrame containing the realtime quote snapshot.
     """
+    # Note: start_time, end_time, ts, proxy, start_date, end_date are accepted for backward compatibility but not used in V3
     # Use ticker change handler for automatic symbol resolution
     return _with_ticker_change_handling(
         _inner_retrieve_quote_rt,
@@ -621,14 +642,15 @@ def _inner_retrieve_openInterest(
 
 def _retrieve_openInterest(
     symbol: str = None,
+    end_date: str = None,
     exp: str = None,
     right: str = None,
-    strike: float = None,
     start_date: str = None,
-    end_date: str = None,
+    strike: float = None,
+    print_url: bool = False,
+    proxy: str = None,
     at_date: str = None,
     *,
-    print_url: bool = False,
     opttick: str = None,
     **kwargs,
 ) -> pd.DataFrame:
@@ -646,17 +668,26 @@ def _retrieve_openInterest(
     ----------
     symbol : str
         Underlying symbol (e.g., 'AAPL').
+    end_date : str
+        End date in 'YYYY-MM-DD' format.
     exp : str
         Expiration date in 'YYYY-MM-DD' format.
     right : str
         Option right ('call' or 'put').
+    start_date : str
+        Start date in 'YYYY-MM-DD' format.
     strike : float
         Strike price of the option.
+    print_url : bool
+        Whether to print the request URL.
+    proxy : str
+        Proxy URL for backward compatibility (unused in V3).
     Returns
     -------
     pd.DataFrame
-        DataFrame containing the open interest snapshot.
+        DataFrame containing the open interest data with Datetime as a column.
     """
+    # Note: proxy parameter is accepted for backward compatibility but not used in V3
     # Use ticker change handler for automatic symbol resolution
     return _with_ticker_change_handling(
         _inner_retrieve_openInterest,
@@ -711,13 +742,13 @@ def _inner_retrieve_bulk_open_interest(
 def _retrieve_bulk_open_interest(
     symbol: str,
     exp: str = None,
-    right: str = None,
-    strike: float = None,
     start_date: str = None,
     end_date: str = None,
-    at_date: str = None,
-    *,
     print_url: bool = False,
+    proxy: str = None,
+    right: str = None,
+    strike: float = None,
+    at_date: str = None,
     **kwargs,
 ) -> pd.DataFrame:
     """
@@ -738,6 +769,14 @@ def _retrieve_bulk_open_interest(
         Underlying symbol (e.g., 'AAPL').
     exp : str
         Expiration date in 'YYYY-MM-DD' format.
+    start_date : str
+        Start date in 'YYYY-MM-DD' format.
+    end_date : str
+        End date in 'YYYY-MM-DD' format.
+    print_url : bool
+        Whether to print the request URL.
+    proxy : str
+        Proxy URL for backward compatibility (unused in V3).
     right : str
         Option right ('call' or 'put').
     strike : float
@@ -745,8 +784,9 @@ def _retrieve_bulk_open_interest(
     Returns
     -------
     pd.DataFrame
-        DataFrame containing the bulk open interest snapshot.
+        DataFrame containing the bulk open interest data.
     """
+    # Note: proxy parameter is accepted for backward compatibility but not used in V3
     # Use ticker change handler for automatic symbol resolution
     return _with_ticker_change_handling(
         _inner_retrieve_bulk_open_interest,
@@ -801,11 +841,14 @@ def _raw_retrieve_eod_ohlc(
 
 def _retrieve_eod_ohlc(
     symbol: str = None,
-    start_date: str = None,
     end_date: str = None,
     exp: str = None,
-    strike: float = None,
     right: str = None,
+    start_date: str = None,
+    strike: float = None,
+    print_url: bool = False,
+    rt: bool = True,
+    proxy: str = None,
     *,
     opttick: str = None,
     **kwargs,
@@ -817,17 +860,18 @@ def _retrieve_eod_ohlc(
 
     Parameters:
         symbol (str): Underlying asset ticker symbol.
-        start_date (str): Start date in 'YYYY-MM-DD' format.
         end_date (str): End date in 'YYYY-MM-DD' format.
-        exp (str, optional): Expiration date in 'YYYY-MM-DD' format.
-            If exp is None, retrieves data for all expirations.
-        strike (float, optional): Strike price of the option.
-            if strike is None, retrieves data for all strikes.
-        right (str, optional): Option type - 'call', 'put', or 'both'.
-            If right is None, retrieves data for both calls and puts.
+        exp (str): Expiration date in 'YYYY-MM-DD' format.
+        right (str): Option type - 'call', 'put', 'C', or 'P'.
+        start_date (str): Start date in 'YYYY-MM-DD' format.
+        strike (float): Strike price of the option.
+        print_url (bool): Whether to print the request URL.
+        rt (bool): Real-time flag for compatibility (unused in V3).
+        proxy (str): Proxy URL for distributed fetching (unused in V3).
     Returns:
         pd.DataFrame: DataFrame containing the EOD OHLC data.
     """
+    # Note: proxy parameter is accepted for backward compatibility but not used in V3
     # Use ticker change handler for automatic symbol resolution
     return _with_ticker_change_handling(
         _raw_retrieve_eod_ohlc,
@@ -838,6 +882,7 @@ def _retrieve_eod_ohlc(
         strike=strike,
         right=right,
         opttick=opttick,
+        print_url=print_url,
         **kwargs,
     )
 
@@ -846,7 +891,8 @@ def _raw_retrieve_bulk_eod(
     symbol: str = None,
     start_date: str = None,
     end_date: str = None,
-    print_url: str = None,
+    print_url: bool = False,
+    proxy: str = None,
     *,
     exp: str = None,
     strike: float = None,
@@ -855,7 +901,11 @@ def _raw_retrieve_bulk_eod(
     """
     Internal function to retrieve bulk historical EOD OHLC data.
     Use _retrieve_bulk_eod() instead for automatic ticker change handling.
+
+    Args:
+        proxy: Proxy URL for backward compatibility (unused in V3)
     """
+    # Note: proxy parameter is accepted for backward compatibility but not used in V3
     params = _build_params(
         symbol=symbol,
         start_date=start_date,
@@ -874,7 +924,8 @@ def _retrieve_bulk_eod(
     symbol: str = None,
     start_date: str = None,
     end_date: str = None,
-    print_url: str = None,
+    print_url: bool = False,
+    proxy: str = None,
     *,
     exp: str = None,
     strike: float = None,
@@ -890,6 +941,8 @@ def _retrieve_bulk_eod(
         exp (str): Expiration date in 'YYYY-MM-DD' format.
         start_date (str): Start date in 'YYYY-MM-DD' format.
         end_date (str): End date in 'YYYY-MM-DD' format.
+        print_url (bool): Whether to print the request URL.
+        proxy (str): Proxy URL for distributed fetching (unused in V3).
         expiration (str, optional): Specific expiration date to filter results.
         strike (float, optional): Strike price to filter results.
         right (str, optional): Option type - 'call', 'put', or 'both'.
@@ -897,6 +950,7 @@ def _retrieve_bulk_eod(
     Returns:
         pd.DataFrame: DataFrame containing the bulk EOD OHLC data.
     """
+    # Note: proxy parameter is accepted for backward compatibility but not used in V3
     # Use ticker change handler for automatic symbol resolution
     return _with_ticker_change_handling(
         _raw_retrieve_bulk_eod,
@@ -907,6 +961,7 @@ def _retrieve_bulk_eod(
         strike=strike,
         right=right,
         print_url=print_url,
+        proxy=proxy,
     )
 
 
@@ -924,7 +979,9 @@ def _raw_list_contracts(symbol: str, date: str, print_url: bool = False, **kwarg
     return df
 
 
-def _list_contracts(symbol: str, date: str = None, print_url: bool = False, **kwargs) -> pd.DataFrame:
+def _list_contracts(
+    symbol: str, date: str = None, print_url: bool = False, proxy: str = None, **kwargs
+) -> pd.DataFrame:
     """
     Retrieve current option contracts for a symbol.
 
@@ -933,15 +990,18 @@ def _list_contracts(symbol: str, date: str = None, print_url: bool = False, **kw
     Args:
         symbol (str): The underlying asset symbol.
         date (str): The date for which to retrieve contracts (YYYY-MM-DD).
+        print_url (bool): Whether to print the request URL.
+        proxy (str): Proxy URL for backward compatibility (unused in V3).
 
     Returns:
         pd.DataFrame: DataFrame containing the option contracts.
 
     """
+    # Note: proxy parameter is accepted for backward compatibility but not used in V3
     # Use ticker change handler for automatic symbol resolution
 
     ## Catch start_date for backward compatible
-    start_date = kwargs.pop("start_date")
+    start_date = kwargs.pop("start_date", None)
     date = date or start_date
     return _with_ticker_change_handling(_raw_list_contracts, symbol=symbol, date=date, print_url=print_url, **kwargs)
 
@@ -1019,6 +1079,7 @@ def _retrieve_chain_bulk(
     oi: bool = False,
     end_time: str = None,
     print_url: bool = False,
+    proxy: str = None,
     start_date: str = None,
     end_date: str = None,
     **kwargs,
@@ -1046,17 +1107,21 @@ def _retrieve_chain_bulk(
         If True, retrieves open interest data instead of chain data.
     end_time : str
         End time in 'HH:MM:SS' format.
+    proxy : str
+        Proxy URL for backward compatibility (unused in V3).
 
     Returns
     -------
     pd.DataFrame
         DataFrame containing the bulk option chain data.
     """
+    # Note: proxy parameter is accepted for backward compatibility but not used in V3
     ## Decide date from date, start_date & end_date to ensure backward-compatibility
-    assert start_date == end_date, "start_date and end_date must be the same for bulk chain retrieval."
-    assert not all(
-        d is None for d in [start_date, end_date, date]
-    ), "Either pass ONLY date or both start_date & end_date"
+    if start_date is not None and end_date is not None:
+        assert start_date == end_date, "start_date and end_date must be the same for bulk chain retrieval."
+    assert not all(d is None for d in [start_date, end_date, date]), (
+        "Either pass ONLY date or both start_date & end_date"
+    )
 
     date = date or start_date
     # Use ticker change handler for automatic symbol resolution
@@ -1121,15 +1186,19 @@ def _raw_retrieve_quote(
 
 def _retrieve_quote(
     symbol: str = None,
-    start_date: str = None,
     end_date: str = None,
     exp: str = None,
     right: str = None,
+    start_date: str = None,
     strike: float = None,
+    start_time: str = None,
+    print_url: bool = False,
+    end_time: str = None,
     interval: str = None,
+    proxy: str = None,
+    ohlc_format: bool = True,
     *,
     opttick: str = None,
-    print_url: bool = False,
     **kwargs,
 ) -> pd.DataFrame:
     """
@@ -1139,17 +1208,21 @@ def _retrieve_quote(
 
     Parameters:
         symbol (str): Underlying asset ticker symbol.
-        start_date (str): Start date in 'YYYY-MM-DD' format.
         end_date (str): End date in 'YYYY-MM-DD' format.
-        exp (str, optional): Expiration date in 'YYYY-MM-DD' format.
-            If exp is None, retrieves data for all expirations.
-        right (str, optional): Option type - 'call', 'put', or 'both'.
-            If right is None, retrieves data for both calls and puts.
-        strike (float, optional): Strike price of the option.
-            if strike is None, retrieves data for all strikes.
+        exp (str): Expiration date in 'YYYY-MM-DD' format.
+        right (str): Option type - 'call', 'put', 'C', or 'P'.
+        start_date (str): Start date in 'YYYY-MM-DD' format.
+        strike (float): Strike price of the option.
+        start_time (str): Start time for intraday filtering (for backward compatibility, unused in V3).
+        print_url (bool): Whether to print the request URL.
+        end_time (str): End time for intraday filtering (for backward compatibility, unused in V3).
+        interval (str): Data interval (e.g., '1m', '5m', '30m').
+        proxy (str): Proxy URL for distributed fetching (unused in V3).
+        ohlc_format (bool): Format flag (for backward compatibility, unused in V3).
     Returns:
         pd.DataFrame: DataFrame containing the historical Quote data.
     """
+    # Note: start_time, end_time, proxy, ohlc_format are accepted for backward compatibility but not used in V3
     # Use ticker change handler for automatic symbol resolution
     return _with_ticker_change_handling(
         _raw_retrieve_quote,
@@ -1206,15 +1279,17 @@ def _raw_retrieve_ohlc(
 
 def _retrieve_ohlc(
     symbol: str = None,
-    start_date: str = None,
     end_date: str = None,
     exp: str = None,
     right: str = None,
+    start_date: str = None,
     strike: float = None,
+    start_time: str = None,
+    print_url: bool = False,
+    proxy: str = None,
     interval: str = None,
     *,
     opttick: str = None,
-    print_url: bool = False,
     **kwargs,
 ) -> pd.DataFrame:
     """
@@ -1224,18 +1299,38 @@ def _retrieve_ohlc(
 
     Parameters:
         symbol (str): Underlying asset ticker symbol.
-        start_date (str): Start date in 'YYYY-MM-DD' format.
         end_date (str): End date in 'YYYY-MM-DD' format.
         exp (str): Expiration date in 'YYYY-MM-DD' format.
         right (str): Option type - 'call', 'put', or 'both'.
+        start_date (str): Start date in 'YYYY-MM-DD' format.
         strike (float): Strike price of the option.
+        start_time (str): Start time for intraday filtering (for backward compatibility, unused in V3).
+        print_url (bool): Whether to print the request URL.
+        proxy (str): Proxy URL for distributed fetching (unused in V3).
         interval (str): Data interval (e.g., '1m', '5m', etc.).
     Returns:
         pd.DataFrame: DataFrame containing the historical OHLC data.
+
+    WARNING - INCOMPLETE V2 COMPATIBILITY:
+        V2's retrieve_ohlc returned 6 additional quote-related columns that are missing in V3:
+        - Bid_size
+        - CloseBid (or Closebid)
+        - Ask_size
+        - CloseAsk (or Closeask)
+        - Midpoint
+        - Weighted_midpoint
+
+        These columns are not available from V3's OHLC endpoint. To achieve full V2 compatibility,
+        you would need to:
+        1. Retrieve OHLC data (Open, High, Low, Close, Volume)
+        2. Retrieve quote data for the same time range (bid/ask data)
+        3. Merge the two datasets
+
+        For now, this function returns only the OHLC columns. If you need the quote columns,
+        use retrieve_quote() instead which returns the full quote data including bid/ask.
     """
+    # Note: start_time and proxy are accepted for backward compatibility but not used in V3
     # Use ticker change handler for automatic symbol resolution
-    ##TODO: For future iteration we need to add following columns from retrieve_quote endpoint:
-    ##      Bid_size, CloseBid, Ask_size, CloseAsk, Midpoint, Weighted_midpoint
     return _with_ticker_change_handling(
         _raw_retrieve_ohlc,
         symbol=symbol,
