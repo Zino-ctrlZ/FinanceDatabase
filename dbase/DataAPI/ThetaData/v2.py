@@ -199,8 +199,6 @@ See Also
 - Utility Functions: dbase.DataAPI._ThetaData.utils
 """
 
-from regex import F
-
 from trade.helpers.Logging import setup_logger
 from trade import reload_pricing_config
 import requests
