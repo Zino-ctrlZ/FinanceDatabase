@@ -269,7 +269,6 @@ See Also
 # - There is no bulk Intraday/Quote endpoint. The resampling is too complicated
 # - Index is always only datetime
 
-from io import StringIO
 import pandas as pd
 import numpy as np
 from dbase.DataAPI.ThetaData.v3.vars import (
@@ -284,7 +283,13 @@ from dbase.DataAPI.ThetaData.v3.vars import (
     OI_URL,
     LIST_DATES,
 )
-from dbase.DataAPI.ThetaData.utils import _handle_opttick_param, _all_is_provided, _fetch_data, bootstrap_ohlc
+from dbase.DataAPI.ThetaData.utils import (
+    _handle_opttick_param,
+    _all_is_provided,
+    _fetch_data,
+    _parse_csv_to_dataframe,
+    bootstrap_ohlc,
+)
 from dbase.utils import default_timestamp
 from dbase.DataAPI.ThetaData.v3.utils import (
     _with_ticker_change_handling,
@@ -322,7 +327,7 @@ def _raw_list_dates(
         ),
         print_url=print_url,
     )
-    data = pd.read_csv(StringIO(txt))
+    data = _parse_csv_to_dataframe(txt)
     return data
 
 
@@ -398,7 +403,7 @@ def _raw_retrieve_quote_rt(
         strike=strike,
     )
     txt = _fetch_data(REALTIME_QUOTE_RAW, params, print_url=print_url)
-    data = pd.read_csv(StringIO(txt))
+    data = _parse_csv_to_dataframe(txt)
     return data
 
 
@@ -597,7 +602,7 @@ def _raw_retrieve_openInterest(
     )
 
     txt = _fetch_data(OI_URL, params, print_url=print_url)
-    return pd.read_csv(StringIO(txt))
+    return _parse_csv_to_dataframe(txt)
 
 
 def _inner_retrieve_openInterest(
@@ -731,7 +736,7 @@ def _inner_retrieve_bulk_open_interest(
         at_date=at_date,
         **kwargs,
     )
-    data = _new_dataframe_formatting(df=data, interval="1d", is_bulk=False)
+    data = _new_dataframe_formatting(df=data, interval="1d", is_bulk=True)
 
     if SETTINGS.use_old_formatting:
         data["Datetime"] = data.index
@@ -834,7 +839,7 @@ def _raw_retrieve_eod_ohlc(
         symbol=symbol, start_date=start_date, end_date=end_date, exp=exp, strike=strike, right=right
     ), ALL_MUST_BE_PROVIDED_ERR + " Both start_date and end_date must be provided."
     text = _fetch_data(EOD_OHLC, params)
-    df = pd.read_csv(StringIO(text))
+    df = _parse_csv_to_dataframe(text)
     df = _new_dataframe_formatting(df, interval="1d")
     return df
 
@@ -915,7 +920,7 @@ def _raw_retrieve_bulk_eod(
         right=right,
     )
     txt = _fetch_data(EOD_OHLC, params, print_url=print_url)
-    data = pd.read_csv(StringIO(txt))
+    data = _parse_csv_to_dataframe(txt)
     data = _new_dataframe_formatting(data, interval="1d", is_bulk=True)
     return data
 
@@ -971,7 +976,7 @@ def _raw_list_contracts(symbol: str, date: str, print_url: bool = False, **kwarg
     Use _list_contracts() instead for automatic ticker change handling.
     """
     response = _fetch_data(LIST_CONTRACTS, {"symbol": symbol, "date": date}, print_url=print_url)
-    df = pd.read_csv(StringIO(response))
+    df = _parse_csv_to_dataframe(response)
     df["timestamp"] = date
     df = _new_dataframe_formatting(df, interval="1d", ignore_drop_conditional=True)
     if SETTINGS.use_old_formatting:
@@ -1030,6 +1035,7 @@ def _raw_retrieve_chain_bulk(
         right=right,
         symbol=symbol,
         exp=exp,
+        enforce_single_option=False,  # Allow opttick to be used for bulk by not enforcing single option
     )
 
     params = _build_params(
@@ -1058,7 +1064,7 @@ def _raw_retrieve_chain_bulk(
             time_of_day=end_time,
         )
         txt = _fetch_data(LIST_CONTRACTS_QUOTE, params, print_url=print_url)
-        data = pd.read_csv(StringIO(txt))
+        data = _parse_csv_to_dataframe(txt)
 
     if "timestamp" not in data.columns:
         data["timestamp"] = date

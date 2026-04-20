@@ -204,8 +204,9 @@ See Also
 """
 
 import json
+from io import StringIO
 import requests
-from dbase.DataAPI.ThetaExceptions import raise_thetadata_exception
+from dbase.DataAPI.ThetaExceptions import raise_thetadata_exception, is_thetadata_exception
 from trade.helpers.helper import parse_option_tick
 from trade.helpers.Logging import setup_logger
 from typing import Tuple
@@ -514,7 +515,7 @@ def _handle_opttick_param(
     symbol: str = None,
     exp: str = None,
     opttick: str = None,
-    enforce_single_option: bool = False,
+    enforce_single_option: bool = True,
 ) -> Tuple[float, str, str, str]:
     """Helper function to parse and validate option tick parameters.
 
@@ -537,7 +538,7 @@ def _handle_opttick_param(
         parsed_symbol, parsed_right, parsed_exp, parsed_strike = parse_option_tick(opttick).values()
         return parsed_strike, parsed_right, parsed_symbol, parsed_exp
     else:
-        if not _all_is_provided(strike=strike, right=right, symbol=symbol, exp=exp):
+        if not _all_is_provided(strike=strike, right=right, symbol=symbol, exp=exp) and enforce_single_option:
             raise ValueError(
                 "When 'opttick' is not provided, all of 'strike', 'right', 'symbol', and 'exp' must be provided."
             )
@@ -558,7 +559,40 @@ def request_from_proxy(thetaUrl, queryparam, instanceUrl, print_url=False):
     return response
 
 
-def _fetch_data(theta_url: str, params: dict, print_url: bool = False, dry_run: bool = None) -> str:
+def _parse_csv_to_dataframe(text_or_df) -> pd.DataFrame:
+    """
+    Convert ThetaData response text to a DataFrame.
+
+    Accepts a DataFrame (pass-through) or CSV text.
+    """
+    if isinstance(text_or_df, pd.DataFrame):
+        return text_or_df
+    if text_or_df is None:
+        return pd.DataFrame()
+    if isinstance(text_or_df, str):
+        if text_or_df.strip() == "":
+            return pd.DataFrame()
+        return pd.read_csv(StringIO(text_or_df))
+    raise TypeError(f"Unsupported response type for parsing: {type(text_or_df)}")
+
+
+def _split_date_range_inclusive(start_date: str, end_date: str, max_days: int = 300) -> list[tuple[str, str]]:
+    """Split inclusive date range into max_days calendar day chunks."""
+    start_dt = pd.to_datetime(start_date)
+    end_dt = pd.to_datetime(end_date)
+    if start_dt > end_dt:
+        raise ValueError("start_date must be <= end_date")
+
+    ranges = []
+    current = start_dt
+    while current <= end_dt:
+        chunk_end = min(current + pd.Timedelta(days=max_days - 1), end_dt)
+        ranges.append((current.strftime("%Y%m%d"), chunk_end.strftime("%Y%m%d")))
+        current = chunk_end + pd.Timedelta(days=1)
+    return ranges
+
+
+def _fetch_data(theta_url: str, params: dict, print_url: bool = False, dry_run: bool = None):
     """
     Fetch data from ThetaData API, using proxy if available.
 
@@ -571,51 +605,86 @@ def _fetch_data(theta_url: str, params: dict, print_url: bool = False, dry_run: 
         print_url (bool): Whether to print the request URL.
         dry_run (bool, optional): Force dry-run mode. If None, checks environment variable.
     Returns:
-        str: The response data as a string.
+        str | pd.DataFrame: Response data as raw CSV text, or a stitched DataFrame
+        when a start_date/end_date range is provided.
     """
     import os
 
-    # Check if dry-run mode is enabled
-    if dry_run is None:
-        dry_run = os.environ.get("THETADATA_DRY_RUN", "false").lower() == "true"
+    def _fetch_data_single(theta_url: str, params: dict, print_url: bool, dry_run: bool) -> str:
+        # Check if dry-run mode is enabled
+        if dry_run is None:
+            dry_run = os.environ.get("THETADATA_DRY_RUN", "false").lower() == "true"
 
-    # Dry-run mode: return mock data without making actual request
-    if dry_run:
-        logger.info(f"[DRY RUN] Would call: {theta_url}")
-        logger.info(f"[DRY RUN] With params: {params}")
+        # Dry-run mode: return mock data without making actual request
+        if dry_run:
+            logger.info(f"[DRY RUN] Would call: {theta_url}")
+            logger.info(f"[DRY RUN] With params: {params}")
 
-        # Try to import dry_run module for mock responses
+            # Try to import dry_run module for mock responses
+            try:
+                from .tests.dry_run import get_dry_run_response
+
+                mock_data = get_dry_run_response(theta_url, params)
+                if print_url:
+                    print(f"[DRY RUN] Request URL: {theta_url}?{params}")
+                return mock_data
+            except ImportError:
+                # Fallback if test module not available
+                logger.warning("[DRY RUN] Mock responses not available, returning minimal data")
+                return "timestamp\n20240101"
+
+        # Normal execution - make actual API request
+        instance_url = get_proxy_url()
+        if instance_url:
+            response = request_from_proxy(theta_url, params, instance_url)
+            text = response.json()["data"]
+            url = response.json().get("url", "N/A")
+        else:
+            response = requests.get(theta_url, params=params)
+            text = response.text
+            url = response.url
+
+        ## Format text for consistency
+        text = text.replace("created", "timestamp")
+
+        ## Log the request latency
+        _submit_log(url, response)
+
+        ## Print URL if required
+        if print_url:
+            print(f"Request URL: {url}")
+        raise_thetadata_exception(response=response, params=params, proxy=instance_url)
+        return text
+
+    has_range = "start_date" in params and "end_date" in params and params.get("start_date") and params.get("end_date")
+    if not has_range:
+        return _fetch_data_single(theta_url, params, print_url, dry_run)
+
+    date_ranges = _split_date_range_inclusive(params["start_date"], params["end_date"], max_days=300)
+    dataframes = []
+    for idx, (chunk_start, chunk_end) in enumerate(date_ranges):
+        chunk_params = params.copy()
+        chunk_params["start_date"] = chunk_start
+        chunk_params["end_date"] = chunk_end
+        chunk_print = print_url if idx == 0 else False
         try:
-            from .tests.dry_run import get_dry_run_response
+            text = _fetch_data_single(theta_url, chunk_params, chunk_print, dry_run)
+            dataframes.append(_parse_csv_to_dataframe(text))
+        except Exception as e:
+            if is_thetadata_exception(e):
+                raise
+            logger.warning(f"Chunk fetch failed for {chunk_start} to {chunk_end}: {e}")
+            continue
 
-            mock_data = get_dry_run_response(theta_url, params)
-            if print_url:
-                print(f"[DRY RUN] Request URL: {theta_url}?{params}")
-            return mock_data
-        except ImportError:
-            # Fallback if test module not available
-            logger.warning("[DRY RUN] Mock responses not available, returning minimal data")
-            return "timestamp\n20240101"
+    if not dataframes:
+        return pd.DataFrame()
 
-    # Normal execution - make actual API request
-    instance_url = get_proxy_url()
-    if instance_url:
-        response = request_from_proxy(theta_url, params, instance_url)
-        text = response.json()["data"]
-        url = response.json().get("url", "N/A")
+    combined = pd.concat(dataframes, axis=0, ignore_index=True)
+    dedup_subset = [
+        col for col in ["timestamp", "strike", "right", "expiration", "symbol", "root"] if col in combined.columns
+    ]
+    if dedup_subset:
+        combined = combined.drop_duplicates(subset=dedup_subset, keep="last")
     else:
-        response = requests.get(theta_url, params=params)
-        text = response.text
-        url = response.url
-
-    ## Format text for consistency
-    text = text.replace("created", "timestamp")
-
-    ## Log the request latency
-    _submit_log(url, response)
-
-    ## Print URL if required
-    if print_url:
-        print(f"Request URL: {url}")
-    raise_thetadata_exception(response=response, params=params, proxy=instance_url)
-    return text
+        combined = combined.drop_duplicates(keep="last")
+    return combined

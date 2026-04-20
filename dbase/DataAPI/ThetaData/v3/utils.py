@@ -268,8 +268,7 @@ from dbase.DataAPI.ThetaData.v3.vars import (
 
 from trade import PRICING_CONFIG, HOLIDAY_SET
 from trade.helpers.threads import runThreads
-from io import StringIO
-from ..utils import _fetch_data
+from ..utils import _fetch_data, _parse_csv_to_dataframe
 from trade.helpers.Logging import setup_logger
 from dbase.DataAPI.ThetaData.utils import convert_string_interval_to_miliseconds, resample, normalize_date_format
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS
@@ -495,7 +494,7 @@ def _multi_threaded_range_fetch(
     def _thread_fetch(url, params, print_url):
         try:
             txt = _fetch_data(url, params, print_url)
-            return pd.read_csv(StringIO(txt))
+            return _parse_csv_to_dataframe(txt)
         except Exception as e:
             logger.error(f"Error fetching data for params {params}: {e}")
             return pd.DataFrame()  # Return empty DataFrame on error
