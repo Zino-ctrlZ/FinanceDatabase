@@ -268,6 +268,7 @@ from dbase.DataAPI.ThetaData.v3.vars import (
 
 from trade import PRICING_CONFIG, HOLIDAY_SET
 from trade.helpers.threads import runThreads
+import numpy as np # noqa
 from ..utils import _fetch_data, _parse_csv_to_dataframe
 from trade.helpers.Logging import setup_logger
 from dbase.DataAPI.ThetaData.utils import convert_string_interval_to_miliseconds, resample, normalize_date_format
@@ -710,38 +711,61 @@ def _with_ticker_change_handling(func: Callable, symbol: str, **kwargs: Any) -> 
         correct_symbol = _get_symbol_for_date(symbol, at_date)
         logger.info(f"Using symbol {correct_symbol} for date {at_date}")
         return func(symbol=correct_symbol, **kwargs)
-
-    # Case 4: Snapshot query (no date params) - use current symbol
-    else:
-        logger.info(f"Snapshot query - using current symbol {symbol}")
-        try:
-            ## If it's a snapshot query, it returns.
-            return func(symbol=symbol, **kwargs)
-
+    
+    # Case 4: Function name == list_dates endpoint - special handling to try all symbols
+    elif func.__name__ == "_raw_list_dates":
         ## list_dates endpoint is a special case where it doesn't have any date parameters
         ## but still needs to handle ticker changes. In this case, we will try to run for all symbols and return the one that works.
         ## Edge case: What if all work??
         ## Then we run the following logic:
         ## 1 If only one works, return that one
-        ## 2 If multiple work, return the one for the specified symbol (current symbol). This is because the list_dates endpoint should return the dates for the current symbol, not the old symbol. 
-        except Exception as e:
-            def _run_without_printing_error():
-                all_symbols = _get_all_symbols_for_ticker_change(symbol)
-                res = {}
-                for sym in all_symbols:
-                    try:
-                        res[sym] = func(symbol=sym, **kwargs)
-                    except Exception as f:
-                        logger.warning(f"Failed to fetch data for symbol {sym}: {f}")
-                return res
-            results = _run_without_printing_error()
-            if not results:
-                raise ThetaDataNotFound(f"No data found for any symbol related to {symbol}") from e
-            if len(results) == 1:
-                return list(results.values())[0]
-            if symbol in results:
-                return results[symbol]
-            else:
-                logger.warning(f"Multiple symbols returned data, but none matched the current symbol {symbol}. Returning data for {list(results.keys())}")
-                return list(results.values())[0]
+        ## 2 If multiple work, combine results and
+
+        def _run_without_printing_error():
+            all_symbols = _get_all_symbols_for_ticker_change(symbol)
+            res = {}
+            for sym in all_symbols:
+                try:
+                    res[sym] = func(symbol=sym, **kwargs)
+                except Exception as f:
+                    logger.warning(f"Failed to fetch data for symbol {sym}: {f}")
+            return res
+
+        results = _run_without_printing_error()
+        if not results:
+            raise ThetaDataNotFound(f"No data found for any symbol related to {symbol}")
+        
+        ## Combine results if multiple symbols worked, and remove duplicates
+        res = []
+        for lst in results.values():
+            res.append(lst)
+        res = pd.concat(res).drop_duplicates().sort_values("date")
+        return res
+    
+    # Case 5: Snapshot query (no date params) - use current symbol
+    else:
+        logger.info(f"Snapshot query - using current symbol {symbol}")
+        ## If it's a snapshot query, it returns.
+        return func(symbol=symbol, **kwargs)
+
+        # except Exception as e:
+            # def _run_without_printing_error():
+            #     all_symbols = _get_all_symbols_for_ticker_change(symbol)
+            #     res = {}
+            #     for sym in all_symbols:
+            #         try:
+            #             res[sym] = func(symbol=sym, **kwargs)
+            #         except Exception as f:
+            #             logger.warning(f"Failed to fetch data for symbol {sym}: {f}")
+            #     return res
+            # results = _run_without_printing_error()
+            # if not results:
+            #     raise ThetaDataNotFound(f"No data found for any symbol related to {symbol}") from e
+            # if len(results) == 1:
+            #     return list(results.values())[0]
+            # if symbol in results:
+            #     return results[symbol]
+            # else:
+            #     logger.warning(f"Multiple symbols returned data, but none matched the current symbol {symbol}. Returning data for {list(results.keys())}")
+            #     return list(results.values())[0]
                 
