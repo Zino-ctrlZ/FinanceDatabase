@@ -21,6 +21,7 @@ from .utils import (
 )
 from dbase.utils import enforce_bus_hours, add_eod_timestamp
 from ..ThetaExceptions import raise_thetadata_exception
+from .patches import ThetaDataPatchProcessor
 
 logger = setup_logger("dbase.DataAPI.ThetaData.switcher", stream_log_level="INFO")
 
@@ -36,6 +37,10 @@ def get_use_v2() -> bool:
 def _log_call(func_name: str, use_v2: bool) -> None:
     version = "v2" if use_v2 else "v3"
     logger.info("Switcher call %s -> %s", func_name, version)
+
+
+def _apply_patches(func_name: str, result, *args, **kwargs):
+    return ThetaDataPatchProcessor.apply_patches(func_name, result, *args, **kwargs)
 
 
 def retrieve_quote_rt(
@@ -92,41 +97,30 @@ def retrieve_quote_rt(
     """
     use_v2 = _use_v2()
     _log_call("retrieve_quote_rt", use_v2)
+    params = {
+        "symbol": symbol,
+        "exp": exp,
+        "right": right,
+        "strike": strike,
+        "start_time": start_time,
+        "print_url": print_url,
+        "end_time": end_time,
+        "ts": ts,
+        "proxy": proxy,
+        "start_date": start_date,
+        "end_date": end_date,
+        "opttick": opttick,
+    }
     if use_v2:
         from . import v2
 
-        return v2.retrieve_quote_rt(
-            symbol=symbol,
-            exp=exp,
-            right=right,
-            strike=strike,
-            start_time=start_time,
-            print_url=print_url,
-            end_time=end_time,
-            ts=ts,
-            proxy=proxy,
-            start_date=start_date,
-            end_date=end_date,
-            opttick=opttick,
-            **kwargs,
-        )
-    from .v3 import endpoints
+        res = v2.retrieve_quote_rt(**params, **kwargs)
+    else:
+        from .v3 import endpoints
 
-    return endpoints._retrieve_quote_rt(
-        symbol=symbol,
-        exp=exp,
-        right=right,
-        strike=strike,
-        start_time=start_time,
-        print_url=print_url,
-        end_time=end_time,
-        ts=ts,
-        proxy=proxy,
-        start_date=start_date,
-        end_date=end_date,
-        opttick=opttick,
-        **kwargs,
-    )
+        res = endpoints._retrieve_quote_rt(**params, **kwargs)
+
+    return _apply_patches("retrieve_quote_rt", res, **params, **kwargs)
 
 
 def retrieve_bulk_quote_rt(
@@ -156,14 +150,22 @@ def retrieve_bulk_quote_rt(
     """
     use_v2 = _use_v2()
     _log_call("retrieve_bulk_quote_rt", use_v2)
+    params = {
+        "symbol": symbol,
+        "exp": exp,
+        "right": right,
+        "strike": strike,
+        "print_url": print_url,
+    }
     if use_v2:
         logger.warning("Bulk realtime quotes not supported in V2 ThetaData API")
-        return None
-    from .v3 import endpoints
+        res = None
+    else:
+        from .v3 import endpoints
 
-    return endpoints._retrieve_bulk_quote_rt(
-        symbol=symbol, exp=exp, right=right, strike=strike, print_url=print_url, **kwargs
-    )
+        res = endpoints._retrieve_bulk_quote_rt(**params, **kwargs)
+
+    return _apply_patches("retrieve_bulk_quote_rt", res, **params, **kwargs)
 
 
 def retrieve_quote(
@@ -206,43 +208,31 @@ def retrieve_quote(
     """
     use_v2 = _use_v2()
     _log_call("retrieve_quote", use_v2)
+    params = {
+        "symbol": symbol,
+        "end_date": end_date,
+        "exp": exp,
+        "right": right,
+        "start_date": start_date,
+        "strike": strike,
+        "start_time": start_time,
+        "print_url": print_url,
+        "end_time": end_time,
+        "interval": interval,
+        "proxy": proxy,
+        "ohlc_format": ohlc_format,
+        "opttick": opttick,
+    }
     if use_v2:
         from . import v2
 
-        return v2.retrieve_quote(
-            symbol=symbol,
-            end_date=end_date,
-            exp=exp,
-            right=right,
-            start_date=start_date,
-            strike=strike,
-            start_time=start_time,
-            print_url=print_url,
-            end_time=end_time,
-            interval=interval,
-            proxy=proxy,
-            ohlc_format=ohlc_format,
-            opttick=opttick,
-            **kwargs,
-        )
-    from .v3 import endpoints
+        res = v2.retrieve_quote(**params, **kwargs)
+    else:
+        from .v3 import endpoints
 
-    return endpoints._retrieve_quote(
-        symbol=symbol,
-        end_date=end_date,
-        exp=exp,
-        right=right,
-        start_date=start_date,
-        strike=strike,
-        start_time=start_time,
-        print_url=print_url,
-        end_time=end_time,
-        interval=interval,
-        proxy=proxy,
-        ohlc_format=ohlc_format,
-        opttick=opttick,
-        **kwargs,
-    )
+        res = endpoints._retrieve_quote(**params, **kwargs)
+
+    return _apply_patches("retrieve_quote", res, **params, **kwargs)
 
 
 def retrieve_ohlc(
@@ -299,39 +289,29 @@ def retrieve_ohlc(
     """
     use_v2 = _use_v2()
     _log_call("retrieve_ohlc", use_v2)
+    params = {
+        "symbol": symbol,
+        "end_date": end_date,
+        "exp": exp,
+        "right": right,
+        "start_date": start_date,
+        "strike": strike,
+        "start_time": start_time,
+        "print_url": print_url,
+        "proxy": proxy,
+        "interval": interval,
+        "opttick": opttick,
+    }
     if use_v2:
         from . import v2
 
-        return v2.retrieve_ohlc(
-            symbol=symbol,
-            end_date=end_date,
-            exp=exp,
-            right=right,
-            start_date=start_date,
-            strike=strike,
-            start_time=start_time,
-            print_url=print_url,
-            proxy=proxy,
-            interval=interval,
-            opttick=opttick,
-            **kwargs,
-        )
-    from .v3 import endpoints
+        res = v2.retrieve_ohlc(**params, **kwargs)
+    else:
+        from .v3 import endpoints
 
-    return endpoints._retrieve_ohlc(
-        symbol=symbol,
-        end_date=end_date,
-        exp=exp,
-        right=right,
-        start_date=start_date,
-        strike=strike,
-        start_time=start_time,
-        print_url=print_url,
-        proxy=proxy,
-        interval=interval,
-        opttick=opttick,
-        **kwargs,
-    )
+        res = endpoints._retrieve_ohlc(**params, **kwargs)
+
+    return _apply_patches("retrieve_ohlc", res, **params, **kwargs)
 
 
 def retrieve_option_ohlc(*args, **kwargs):
@@ -340,11 +320,14 @@ def retrieve_option_ohlc(*args, **kwargs):
     if use_v2:
         from . import v2
 
-        return v2.retrieve_option_ohlc(*args, **kwargs)
-    logger.warning("retrieve_option_ohlc is not available in V3; using retrieve_ohlc instead")
-    from .v3 import endpoints
+        res = v2.retrieve_option_ohlc(*args, **kwargs)
+    else:
+        logger.warning("retrieve_option_ohlc is not available in V3; using retrieve_ohlc instead")
+        from .v3 import endpoints
 
-    return endpoints._retrieve_ohlc(*args, **kwargs)
+        res = endpoints._retrieve_ohlc(*args, **kwargs)
+
+    return _apply_patches("retrieve_option_ohlc", res, *args, **kwargs)
 
 
 def retrieve_eod_ohlc(
@@ -381,37 +364,28 @@ def retrieve_eod_ohlc(
     """
     use_v2 = _use_v2()
     _log_call("retrieve_eod_ohlc", use_v2)
+    params = {
+        "symbol": symbol,
+        "end_date": end_date,
+        "exp": exp,
+        "right": right,
+        "start_date": start_date,
+        "strike": strike,
+        "print_url": print_url,
+        "rt": rt,
+        "proxy": proxy,
+        "opttick": opttick,
+    }
     if use_v2:
         from . import v2
 
-        return v2.retrieve_eod_ohlc(
-            symbol=symbol,
-            end_date=end_date,
-            exp=exp,
-            right=right,
-            start_date=start_date,
-            strike=strike,
-            print_url=print_url,
-            rt=rt,
-            proxy=proxy,
-            opttick=opttick,
-            **kwargs,
-        )
-    from .v3 import endpoints
+        res = v2.retrieve_eod_ohlc(**params, **kwargs)
+    else:
+        from .v3 import endpoints
 
-    return endpoints._retrieve_eod_ohlc(
-        symbol=symbol,
-        end_date=end_date,
-        exp=exp,
-        right=right,
-        start_date=start_date,
-        strike=strike,
-        print_url=print_url,
-        rt=rt,
-        proxy=proxy,
-        opttick=opttick,
-        **kwargs,
-    )
+        res = endpoints._retrieve_eod_ohlc(**params, **kwargs)
+
+    return _apply_patches("retrieve_eod_ohlc", res, **params, **kwargs)
 
 
 def retrieve_bulk_eod(
@@ -447,33 +421,26 @@ def retrieve_bulk_eod(
     """
     use_v2 = _use_v2()
     _log_call("retrieve_bulk_eod", use_v2)
+    params = {
+        "symbol": symbol,
+        "start_date": start_date,
+        "end_date": end_date,
+        "print_url": print_url,
+        "proxy": proxy,
+        "exp": exp,
+        "strike": strike,
+        "right": right,
+    }
     if use_v2:
         from . import v2
 
-        return v2.retrieve_bulk_eod(
-            symbol=symbol,
-            start_date=start_date,
-            end_date=end_date,
-            print_url=print_url,
-            proxy=proxy,
-            exp=exp,
-            strike=strike,
-            right=right,
-            **kwargs,
-        )
-    from .v3 import endpoints
+        res = v2.retrieve_bulk_eod(**params, **kwargs)
+    else:
+        from .v3 import endpoints
 
-    return endpoints._retrieve_bulk_eod(
-        symbol=symbol,
-        start_date=start_date,
-        end_date=end_date,
-        print_url=print_url,
-        proxy=proxy,
-        exp=exp,
-        strike=strike,
-        right=right,
-        **kwargs,
-    )
+        res = endpoints._retrieve_bulk_eod(**params, **kwargs)
+
+    return _apply_patches("retrieve_bulk_eod", res, **params, **kwargs)
 
 
 def retrieve_openInterest(
@@ -525,37 +492,28 @@ def retrieve_openInterest(
     """
     use_v2 = _use_v2()
     _log_call("retrieve_openInterest", use_v2)
+    params = {
+        "symbol": symbol,
+        "end_date": end_date,
+        "exp": exp,
+        "right": right,
+        "start_date": start_date,
+        "strike": strike,
+        "print_url": print_url,
+        "proxy": proxy,
+        "at_date": at_date,
+        "opttick": opttick,
+    }
     if use_v2:
         from . import v2
 
-        return v2.retrieve_openInterest(
-            symbol=symbol,
-            end_date=end_date,
-            exp=exp,
-            right=right,
-            start_date=start_date,
-            strike=strike,
-            print_url=print_url,
-            proxy=proxy,
-            at_date=at_date,
-            opttick=opttick,
-            **kwargs,
-        )
-    from .v3 import endpoints
+        res = v2.retrieve_openInterest(**params, **kwargs)
+    else:
+        from .v3 import endpoints
 
-    return endpoints._retrieve_openInterest(
-        symbol=symbol,
-        end_date=end_date,
-        exp=exp,
-        right=right,
-        start_date=start_date,
-        strike=strike,
-        print_url=print_url,
-        proxy=proxy,
-        at_date=at_date,
-        opttick=opttick,
-        **kwargs,
-    )
+        res = endpoints._retrieve_openInterest(**params, **kwargs)
+
+    return _apply_patches("retrieve_openInterest", res, **params, **kwargs)
 
 
 def retrieve_bulk_open_interest(
@@ -607,35 +565,27 @@ def retrieve_bulk_open_interest(
     """
     use_v2 = _use_v2()
     _log_call("retrieve_bulk_open_interest", use_v2)
+    params = {
+        "symbol": symbol,
+        "exp": exp,
+        "start_date": start_date,
+        "end_date": end_date,
+        "print_url": print_url,
+        "proxy": proxy,
+        "right": right,
+        "strike": strike,
+        "at_date": at_date,
+    }
     if use_v2:
         from . import v2
 
-        return v2.retrieve_bulk_open_interest(
-            symbol=symbol,
-            exp=exp,
-            start_date=start_date,
-            end_date=end_date,
-            print_url=print_url,
-            proxy=proxy,
-            right=right,
-            strike=strike,
-            at_date=at_date,
-            **kwargs,
-        )
-    from .v3 import endpoints
+        res = v2.retrieve_bulk_open_interest(**params, **kwargs)
+    else:
+        from .v3 import endpoints
 
-    return endpoints._retrieve_bulk_open_interest(
-        symbol=symbol,
-        exp=exp,
-        start_date=start_date,
-        end_date=end_date,
-        print_url=print_url,
-        proxy=proxy,
-        right=right,
-        strike=strike,
-        at_date=at_date,
-        **kwargs,
-    )
+        res = endpoints._retrieve_bulk_open_interest(**params, **kwargs)
+
+    return _apply_patches("retrieve_bulk_open_interest", res, **params, **kwargs)
 
 
 def retrieve_chain_bulk(
@@ -685,44 +635,32 @@ def retrieve_chain_bulk(
     """
     use_v2 = _use_v2()
     _log_call("retrieve_chain_bulk", use_v2)
+    params = {
+        "symbol": symbol,
+        "exp": exp,
+        "date": date,
+        "right": right,
+        "strike": strike,
+        "oi": oi,
+        "end_time": end_time,
+        "print_url": print_url,
+        "proxy": proxy,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
     if use_v2:
         from . import v2
 
-        return v2.retrieve_chain_bulk(
-            symbol=symbol,
-            exp=exp,
-            date=date,
-            right=right,
-            strike=strike,
-            oi=oi,
-            end_time=end_time,
-            print_url=print_url,
-            proxy=proxy,
-            start_date=start_date,
-            end_date=end_date,
-            **kwargs,
-        )
-    from .v3 import endpoints
+        res = v2.retrieve_chain_bulk(**params, **kwargs)
+    else:
+        from .v3 import endpoints
 
-    return endpoints._retrieve_chain_bulk(
-        symbol=symbol,
-        exp=exp,
-        date=date,
-        right=right,
-        strike=strike,
-        oi=oi,
-        end_time=end_time,
-        print_url=print_url,
-        proxy=proxy,
-        start_date=start_date,
-        end_date=end_date,
-        **kwargs,
-    )
+        res = endpoints._retrieve_chain_bulk(**params, **kwargs)
+
+    return _apply_patches("retrieve_chain_bulk", res, **params, **kwargs)
 
 
-def list_contracts(
-    symbol: str, date: str = None, print_url: bool = False, proxy: str = None, **kwargs
-) -> pd.DataFrame:
+def list_contracts(symbol: str, date: str = None, print_url: bool = False, proxy: str = None, **kwargs) -> pd.DataFrame:
     """
     Retrieve current option contracts for a symbol.
 
@@ -740,13 +678,22 @@ def list_contracts(
     """
     use_v2 = _use_v2()
     _log_call("list_contracts", use_v2)
+    params = {
+        "symbol": symbol,
+        "date": date,
+        "print_url": print_url,
+        "proxy": proxy,
+    }
     if use_v2:
         from . import v2
 
-        return v2.list_contracts(symbol=symbol, date=date, print_url=print_url, proxy=proxy, **kwargs)
-    from .v3 import endpoints
+        res = v2.list_contracts(**params, **kwargs)
+    else:
+        from .v3 import endpoints
 
-    return endpoints._list_contracts(symbol=symbol, date=date, print_url=print_url, proxy=proxy, **kwargs)
+        res = endpoints._list_contracts(**params, **kwargs)
+
+    return _apply_patches("list_contracts", res, **params, **kwargs)
 
 
 def list_dates(
@@ -781,17 +728,23 @@ def list_dates(
     """
     use_v2 = _use_v2()
     _log_call("list_dates", use_v2)
+    params = {
+        "symbol": symbol,
+        "exp": exp,
+        "right": right,
+        "strike": strike,
+        "opttick": opttick,
+        "print_url": print_url,
+    }
     if use_v2:
         from . import v2
 
-        return v2.list_dates(
-            symbol=symbol, exp=exp, right=right, strike=strike, opttick=opttick, print_url=print_url, **kwargs
-        )
-    from .v3 import endpoints
+        res = v2.list_dates(**params, **kwargs)
+    else:
+        from .v3 import endpoints
 
-    return endpoints._list_dates(
-        symbol=symbol, exp=exp, right=right, strike=strike, opttick=opttick, print_url=print_url, **kwargs
-    )
+        res = endpoints._list_dates(**params, **kwargs)
+    return _apply_patches("list_dates", res, **params, **kwargs)
 
 
 def ping_proxy(*args, **kwargs):
@@ -800,10 +753,13 @@ def ping_proxy(*args, **kwargs):
     if use_v2:
         from .proxy import ping_proxy_v2
 
-        return ping_proxy_v2(*args, **kwargs)
-    from .proxy import ping_proxy_v3
+        res = ping_proxy_v2(*args, **kwargs)
+    else:
+        from .proxy import ping_proxy_v3
 
-    return ping_proxy_v3(*args, **kwargs)
+        res = ping_proxy_v3(*args, **kwargs)
+
+    return _apply_patches("ping_proxy", res, *args, **kwargs)
 
 
 def quote_to_eod_patch(
@@ -898,7 +854,19 @@ def quote_to_eod_patch(
     )
     q_to_eod.index = pd.to_datetime(q_to_eod.index)
     q_to_eod.index.name = "Datetime"
-    return q_to_eod
+    return _apply_patches(
+        "quote_to_eod_patch",
+        q_to_eod,
+        symbol=symbol,
+        end_date=end_date,
+        exp=exp,
+        right=right,
+        start_date=start_date,
+        strike=strike,
+        print_url=print_url,
+        quote_func=quote_func,
+        **kwargs,
+    )
 
 
 __all__ = [

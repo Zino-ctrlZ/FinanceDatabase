@@ -1,0 +1,11 @@
+
+patches:
+    - func_name: list_dates
+      patch_func: _remove_incorrect_date_for_option
+      description: |
+        This patch addresses an issue where the list_dates endpoint was returning an incorrect date for options. The patch function checks the results returned by the original list_dates function and removes any entries that contain the incorrect date. This ensures that users receive accurate information when querying for available dates, particularly for options data. The patch is designed to be applied seamlessly without affecting other functionalities of the list_dates endpoint.
+        Key points about the patch function:
+        - It takes the original result from the list_dates function as input and processes it to identify and remove any entries with the incorrect date.
+        - The function is designed to be flexible and can handle additional parameters if needed, ensuring compatibility with the existing API structure.
+        - By applying this patch, we enhance the reliability of the data provided by the list_dates endpoint, particularly for users interested in options data.
+      function_module: dbase.DataAPI.ThetaData.patches.p1
