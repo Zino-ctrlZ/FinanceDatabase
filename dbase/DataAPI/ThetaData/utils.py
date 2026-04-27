@@ -206,7 +206,7 @@ See Also
 import json
 from io import StringIO
 import requests
-from dbase.DataAPI.ThetaExceptions import raise_thetadata_exception, is_thetadata_exception
+from dbase.DataAPI.ThetaExceptions import raise_thetadata_exception, is_thetadata_exception # noqa
 from trade.helpers.helper import parse_option_tick
 from trade.helpers.Logging import setup_logger
 from typing import Tuple
@@ -566,14 +566,18 @@ def _parse_csv_to_dataframe(text_or_df) -> pd.DataFrame:
     Accepts a DataFrame (pass-through) or CSV text.
     """
     if isinstance(text_or_df, pd.DataFrame):
-        return text_or_df
-    if text_or_df is None:
-        return pd.DataFrame()
-    if isinstance(text_or_df, str):
+        df = text_or_df
+    elif text_or_df is None:
+        df = pd.DataFrame()
+    elif isinstance(text_or_df, str):
         if text_or_df.strip() == "":
-            return pd.DataFrame()
-        return pd.read_csv(StringIO(text_or_df))
-    raise TypeError(f"Unsupported response type for parsing: {type(text_or_df)}")
+            df = pd.DataFrame()
+        else:
+            df = pd.read_csv(StringIO(text_or_df))
+    else:
+        raise TypeError(f"Unsupported response type for parsing: {type(text_or_df)}")
+    
+    return df
 
 
 def _split_date_range_inclusive(start_date: str, end_date: str, max_days: int = 300) -> list[tuple[str, str]]:
@@ -643,7 +647,8 @@ def _fetch_data(theta_url: str, params: dict, print_url: bool = False, dry_run: 
             response = requests.get(theta_url, params=params)
             text = response.text
             url = response.url
-
+        if print_url:
+            print(f"Request URL: {url}")
         ## Format text for consistency
         text = text.replace("created", "timestamp")
 
@@ -667,14 +672,14 @@ def _fetch_data(theta_url: str, params: dict, print_url: bool = False, dry_run: 
         chunk_params["start_date"] = chunk_start
         chunk_params["end_date"] = chunk_end
         chunk_print = print_url if idx == 0 else False
-        try:
-            text = _fetch_data_single(theta_url, chunk_params, chunk_print, dry_run)
-            dataframes.append(_parse_csv_to_dataframe(text))
-        except Exception as e:
-            if is_thetadata_exception(e):
-                raise
-            logger.warning(f"Chunk fetch failed for {chunk_start} to {chunk_end}: {e}")
-            continue
+        # try:
+        text = _fetch_data_single(theta_url, chunk_params, chunk_print, dry_run)
+        dataframes.append(_parse_csv_to_dataframe(text))
+        # except Exception as e:
+        # if is_thetadata_exception(e):
+        #     raise
+        # logger.warning(f"Chunk fetch failed for {chunk_start} to {chunk_end}: {e}")
+        continue
 
     if not dataframes:
         return pd.DataFrame()

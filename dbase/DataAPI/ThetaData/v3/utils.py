@@ -257,7 +257,7 @@ See Also
 
 import pandas as pd
 from dbase.utils import add_eod_timestamp
-from dbase.DataAPI.ThetaExceptions import MissingColumnError
+from dbase.DataAPI.ThetaExceptions import MissingColumnError, ThetaDataNotFound
 from dbase.DataAPI.ThetaData.v3.vars import (
     SETTINGS,
     ONE_DAY_MILLISECONDS,
@@ -273,13 +273,13 @@ from trade.helpers.Logging import setup_logger
 from dbase.DataAPI.ThetaData.utils import convert_string_interval_to_miliseconds, resample, normalize_date_format
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS
 from typing import Callable, Any
-from trade.helpers.decorators import timeit
+from trade.helpers.decorators import timeit # noqa
 
 logger = setup_logger("dbase.DataAPI.ThetaData.v3.utils")
 
 
 ##NOTE: Interested in seeing additional overhead
-@timeit
+# @timeit
 def _new_dataframe_formatting(
     df: pd.DataFrame, interval: str, is_bulk: bool = False, ignore_drop_conditional: bool = False
 ) -> pd.DataFrame:
@@ -533,6 +533,28 @@ def _get_symbol_for_date(symbol: str, date: str) -> str:
     # Otherwise use current symbol
     return symbol
 
+def _get_all_symbols_for_ticker_change(symbol: str) -> list[str]:
+    """
+    Get all relevant symbols for a ticker that has changed.
+
+    This is used for snapshot queries where we want to try all possible symbols.
+
+    Parameters
+    ----------
+    symbol : str
+        Current ticker symbol
+
+    Returns
+    -------
+    list[str]
+        List of all symbols to try for this ticker (e.g., [old_symbol, new_symbol])
+    """
+    if symbol not in TICK_CHANGE_ALIAS:
+        return [symbol]
+
+    old_symbol, new_symbol, _ = TICK_CHANGE_ALIAS[symbol]
+    return [old_symbol, new_symbol]
+
 
 def _split_date_range_by_ticker_change(symbol: str, start_date: str, end_date: str) -> list[tuple[str, str, str]]:
     """
@@ -692,4 +714,34 @@ def _with_ticker_change_handling(func: Callable, symbol: str, **kwargs: Any) -> 
     # Case 4: Snapshot query (no date params) - use current symbol
     else:
         logger.info(f"Snapshot query - using current symbol {symbol}")
-        return func(symbol=symbol, **kwargs)
+        try:
+            ## If it's a snapshot query, it returns.
+            return func(symbol=symbol, **kwargs)
+
+        ## list_dates endpoint is a special case where it doesn't have any date parameters
+        ## but still needs to handle ticker changes. In this case, we will try to run for all symbols and return the one that works.
+        ## Edge case: What if all work??
+        ## Then we run the following logic:
+        ## 1 If only one works, return that one
+        ## 2 If multiple work, return the one for the specified symbol (current symbol). This is because the list_dates endpoint should return the dates for the current symbol, not the old symbol. 
+        except Exception as e:
+            def _run_without_printing_error():
+                all_symbols = _get_all_symbols_for_ticker_change(symbol)
+                res = {}
+                for sym in all_symbols:
+                    try:
+                        res[sym] = func(symbol=sym, **kwargs)
+                    except Exception as f:
+                        logger.warning(f"Failed to fetch data for symbol {sym}: {f}")
+                return res
+            results = _run_without_printing_error()
+            if not results:
+                raise ThetaDataNotFound(f"No data found for any symbol related to {symbol}") from e
+            if len(results) == 1:
+                return list(results.values())[0]
+            if symbol in results:
+                return results[symbol]
+            else:
+                logger.warning(f"Multiple symbols returned data, but none matched the current symbol {symbol}. Returning data for {list(results.keys())}")
+                return list(results.values())[0]
+                
