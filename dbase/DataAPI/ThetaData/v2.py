@@ -1190,6 +1190,13 @@ def retrieve_quote_rt(
     """
     if not proxy:
         proxy = get_proxy_url()
+
+    if end_time is None:
+        end_time = PRICING_CONFIG["MARKET_CLOSE_TIME"]
+    
+    if start_time is None:
+        start_time = PRICING_CONFIG["MARKET_OPEN_TIME"]
+        
     interval = "1h"
     assert isinstance(
         strike, float
@@ -1416,10 +1423,12 @@ def retrieve_quote(
     """
     Interval size in miliseconds. 1 minute is 6000
     """
-
     assert isinstance(
         strike, float
     ), f"strike should be type float, recieved {type(strike)}"
+    if not end_time:
+        end_time = PRICING_CONFIG["MARKET_CLOSE_TIME"]
+    
 
     ##FIXME: ONE Time fix. We use 9:45 for start_time when bootstrapping ohlc to ensure there is data for open
     if start_time is None:

@@ -9,3 +9,12 @@ patches:
         - The function is designed to be flexible and can handle additional parameters if needed, ensuring compatibility with the existing API structure.
         - By applying this patch, we enhance the reliability of the data provided by the list_dates endpoint, particularly for users interested in options data.
       function_module: dbase.DataAPI.ThetaData.patches.p1
+    - func_name: list_dates
+      patch_func: _remove_aapl_split_artifact
+      description: |
+        This patch removes a known AAPL split-era list_dates artifact where
+        "2020-08-25" appears out of sequence ahead of valid dates starting at
+        "2020-08-31" while intermediate dates are missing. The patch is
+        symbol-specific and only applies when the discontinuity pattern is
+        present.
+      function_module: dbase.DataAPI.ThetaData.patches.p1

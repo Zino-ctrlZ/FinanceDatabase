@@ -4,7 +4,7 @@ from pathlib import Path
 import yaml
 import importlib
 from trade.helpers.Logging import setup_logger
-logger = setup_logger("dbase.DataAPI.ThetaData.PatchProcessor", "DEBUG")
+logger = setup_logger("dbase.DataAPI.ThetaData.PatchProcessor", "WARNING")
 
 class ThetaDataPatchProcessor:
     """
@@ -29,7 +29,7 @@ class ThetaDataPatchProcessor:
         - Patch functions should return result regardless of whether they apply a patch or not. If the patch does not apply, they should return the original result without modification.
         - Function must allow for arbitrary additional parameters using *args and **kwargs to ensure compatibility with the API functions they are patching.
         """
-        print(f"Registering patch for {func_name} with function {patch_func.__name__}")
+        logger.info(f"Registering patch for {func_name} with function {patch_func.__name__}")
         if func_name not in cls.PATCH_FUNCTIONS:
             cls.PATCH_FUNCTIONS[func_name] = []
         certified, message = cls.certify_function_signature(patch_func)

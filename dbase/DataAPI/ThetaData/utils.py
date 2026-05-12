@@ -654,10 +654,6 @@ def _fetch_data(theta_url: str, params: dict, print_url: bool = False, dry_run: 
 
         ## Log the request latency
         _submit_log(url, response)
-
-        ## Print URL if required
-        if print_url:
-            print(f"Request URL: {url}")
         raise_thetadata_exception(response=response, params=params, proxy=instance_url)
         return text
 
