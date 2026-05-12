@@ -7,6 +7,7 @@ to test environments using mysqldump and mysql restore.
 
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -22,9 +23,7 @@ from .db_utils import Database
 from .SQLHelpers import get_engine, sql_host, sql_user, sql_pw, sql_port
 from trade.helpers.helper import setup_logger
 
-db_management_logger = setup_logger(
-    "dbase.database.db_management", stream_log_level="INFO", file_log_level="DEBUG"
-)
+db_management_logger = setup_logger("dbase.database.db_management", stream_log_level="INFO", file_log_level="DEBUG")
 
 
 def validate_database_input(value: str) -> None:
@@ -48,9 +47,7 @@ def validate_database_input(value: str) -> None:
 
     # Validate format: alphanumeric with underscores/hyphens only
     if not re.match(r"^[a-zA-Z0-9_-]+$", value):
-        raise ValueError(
-            "Value must contain only alphanumeric characters, underscores, or hyphens"
-        )
+        raise ValueError("Value must contain only alphanumeric characters, underscores, or hyphens")
 
 
 def get_databases_for_environment(environment: str) -> dict[str, str]:
@@ -129,9 +126,7 @@ class EnvironmentDiff:
     ]  # base_name -> {source_database, target_database, tables_missing_in_target}
 
 
-def diff_environments(
-    source_environment: str, target_environment: str
-) -> EnvironmentDiff:
+def diff_environments(source_environment: str, target_environment: str) -> EnvironmentDiff:
     """
     Compare two environments: what databases and tables does target lack relative to source?
 
@@ -148,9 +143,7 @@ def diff_environments(
     source = get_databases_for_environment(source_environment)
     target = get_databases_for_environment(target_environment)
 
-    missing_databases = {
-        base: source_db for base, source_db in source.items() if base not in target
-    }
+    missing_databases = {base: source_db for base, source_db in source.items() if base not in target}
 
     common_bases = set(source) & set(target)
     table_differences: dict[str, dict[str, Any]] = {}
@@ -229,9 +222,7 @@ def register_database(
             if not existing.empty:
                 # Entry exists - reactivate it if inactive, or raise error if active
                 if existing.iloc[0]["is_active"]:
-                    raise ValueError(
-                        f"Database '{database_name}' already exists and is active"
-                    )
+                    raise ValueError(f"Database '{database_name}' already exists and is active")
                 else:
                     # Reactivate the existing entry
                     update_query = text("""
@@ -252,9 +243,7 @@ def register_database(
                             "branch_name": branch_name,
                         },
                     )
-                    db_management_logger.info(
-                        f"Reactivated existing database entry '{database_name}'"
-                    )
+                    db_management_logger.info(f"Reactivated existing database entry '{database_name}'")
                     return
 
             # No existing entry, insert new one
@@ -275,8 +264,7 @@ def register_database(
     except IntegrityError as e:
         # Handle unique key constraint violation (shouldn't happen with the check above, but just in case)
         raise ValueError(
-            f"Failed to register database '{database_name}': database may already exist. "
-            f"Original error: {e}"
+            f"Failed to register database '{database_name}': database may already exist. Original error: {e}"
         ) from e
 
 
@@ -325,9 +313,7 @@ def clone_database_schema(
         # Conservative name safety check
         illegal = re.compile(r"[`\s;]")
         if illegal.search(source_db) or illegal.search(target_db):
-            raise ValueError(
-                "Database names may not contain spaces, backticks, or semicolons."
-            )
+            raise ValueError("Database names may not contain spaces, backticks, or semicolons.")
 
         env = os.environ.copy()
         # Avoid putting password into process args (visible in process list).
@@ -336,9 +322,45 @@ def clone_database_schema(
 
         extra_mysqldump_args = extra_mysqldump_args or []
 
+        # Resolve mysqldump / mysql binaries — they may not be on the active conda env PATH.
+        mysqldump_bin = shutil.which("mysqldump")
+        mysql_bin = shutil.which("mysql")
+        if not mysqldump_bin:
+            # Common fallback locations (Homebrew, system MySQL, miniconda base).
+            for candidate in [
+                "/usr/local/bin/mysqldump",
+                "/usr/bin/mysqldump",
+                "/opt/homebrew/bin/mysqldump",
+                str(Path.home() / "miniconda3" / "bin" / "mysqldump"),
+                str(Path.home() / "anaconda3" / "bin" / "mysqldump"),
+            ]:
+                if Path(candidate).is_file():
+                    mysqldump_bin = candidate
+                    break
+        if not mysqldump_bin:
+            raise FileNotFoundError(
+                "'mysqldump' not found on PATH or common locations. "
+                "Install MySQL client tools or add mysqldump to PATH."
+            )
+        if not mysql_bin:
+            for candidate in [
+                "/usr/local/bin/mysql",
+                "/usr/bin/mysql",
+                "/opt/homebrew/bin/mysql",
+                str(Path.home() / "miniconda3" / "bin" / "mysql"),
+                str(Path.home() / "anaconda3" / "bin" / "mysql"),
+            ]:
+                if Path(candidate).is_file():
+                    mysql_bin = candidate
+                    break
+        if not mysql_bin:
+            raise FileNotFoundError(
+                "'mysql' not found on PATH or common locations. Install MySQL client tools or add mysql to PATH."
+            )
+
         # 1) Dump (schema-only by default). Use --databases to include CREATE DATABASE + USE.
         dump_cmd = [
-            "mysqldump",
+            mysqldump_bin,
             f"--host={sql_host}",
             f"--port={sql_port}",
             f"--user={sql_user}",
@@ -364,9 +386,7 @@ def clone_database_schema(
         else:
             dump_cmd.append("--skip-triggers")
 
-        result = subprocess.run(
-            dump_cmd, capture_output=True, text=True, check=True, env=env
-        )
+        result = subprocess.run(dump_cmd, capture_output=True, text=True, check=True, env=env)
         dump_sql = result.stdout
 
         # 2) Rewrite CREATE DATABASE / USE so the dump targets the new DB name.
@@ -391,15 +411,13 @@ def clone_database_schema(
         # Optional: strip DEFINER clauses to prevent restore failures if definers don't exist on target server.
         # This is common when moving dumps across environments/users.
         if strip_definers:
-            dump_sql = re.sub(
-                r"DEFINER=`[^`]+`@`[^`]+`", "DEFINER=CURRENT_USER", dump_sql
-            )
+            dump_sql = re.sub(r"DEFINER=`[^`]+`@`[^`]+`", "DEFINER=CURRENT_USER", dump_sql)
 
         # 3) Ensure the target DB exists (even if the rewritten dump creates it, this makes failures clearer).
         create_db_sql = f"CREATE DATABASE IF NOT EXISTS `{target_db}`;"
         subprocess.run(
             [
-                "mysql",
+                mysql_bin,
                 f"--host={sql_host}",
                 f"--port={sql_port}",
                 f"--user={sql_user}",
@@ -412,16 +430,14 @@ def clone_database_schema(
 
         # 4) Restore using mysql client (stdin). This is the robust path for routines/triggers/events.
         # Use a temp file to allow for deyb
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", delete=False, suffix=".sql"
-        ) as tf:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False, suffix=".sql") as tf:
             tf.write(dump_sql)
             tmp_path = Path(tf.name)
 
         with tmp_path.open("r", encoding="utf-8") as f:
             subprocess.run(
                 [
-                    "mysql",
+                    mysql_bin,
                     f"--host={sql_host}",
                     f"--port={sql_port}",
                     f"--user={sql_user}",
@@ -507,9 +523,7 @@ def delete_database(database_name: str) -> None:
     # Conservative name safety check
     illegal = re.compile(r"[`\s;]")
     if illegal.search(database_name):
-        raise ValueError(
-            "Database names may not contain spaces, backticks, or semicolons."
-        )
+        raise ValueError("Database names may not contain spaces, backticks, or semicolons.")
 
     env = os.environ.copy()
     # Avoid putting password into process args (visible in process list).
@@ -535,9 +549,7 @@ def delete_database(database_name: str) -> None:
 
     db_exists = database_name in check_result.stdout
     if not db_exists:
-        db_management_logger.info(
-            f"Database '{database_name}' does not exist in MySQL, skipping deletion"
-        )
+        db_management_logger.info(f"Database '{database_name}' does not exist in MySQL, skipping deletion")
         return  # Database doesn't exist, nothing to delete
 
     # Drop database using mysql command-line tool
@@ -558,9 +570,7 @@ def delete_database(database_name: str) -> None:
             text=True,
         )
     except subprocess.CalledProcessError as e:
-        error_msg = (
-            f"Failed to delete database '{database_name}' with exit code {e.returncode}"
-        )
+        error_msg = f"Failed to delete database '{database_name}' with exit code {e.returncode}"
         if e.stderr:
             error_msg += f"\nmysql error: {e.stderr}"
         if e.stdout:
@@ -623,14 +633,10 @@ def unregister_database(database_name: str) -> None:
     except Exception as e:
         # Log but don't fail - database might already be unregistered
         # This is a soft failure case
-        db_management_logger.debug(
-            f"Failed to unregister database '{database_name}': {e}"
-        )
+        db_management_logger.debug(f"Failed to unregister database '{database_name}': {e}")
 
 
-def delete_environment(
-    environments: list[str], confirm: bool = False
-) -> dict[str, dict[str, str]]:
+def delete_environment(environments: list[str], confirm: bool = False) -> dict[str, dict[str, str]]:
     """
     Delete all databases for one or more environments.
 
@@ -652,8 +658,7 @@ def delete_environment(
     # Safety check: prod can never be deleted programmatically
     if "prod" in environments:
         raise ValueError(
-            "Production environment cannot be deleted programmatically. "
-            "Remove 'prod' from the environments list."
+            "Production environment cannot be deleted programmatically. Remove 'prod' from the environments list."
         )
 
     # Collect all databases across all environments
@@ -702,9 +707,7 @@ def delete_environment(
                 deleted[env][base_name] = db_name
             except Exception as e:
                 # Continue on partial failures
-                db_management_logger.warning(
-                    f"Failed to delete database '{db_name}': {e}"
-                )
+                db_management_logger.warning(f"Failed to delete database '{db_name}': {e}")
                 continue
 
     return deleted
@@ -747,15 +750,11 @@ def create_missing_databases_from_environment(
         try:
             check_database_conflict(target_db_name)
             clone_database_schema(source_db, target_db_name, schema_only=schema_only)
-            register_database(
-                target_db_name, base_name, target_environment, branch_name
-            )
+            register_database(target_db_name, base_name, target_environment, branch_name)
             created[base_name] = target_db_name
         except Exception as e:
             failed[base_name] = str(e)
-            db_management_logger.warning(
-                f"Failed to create database '{target_db_name}' from '{source_db}': {e}"
-            )
+            db_management_logger.warning(f"Failed to create database '{target_db_name}' from '{source_db}': {e}")
 
     return {"created": created, "failed": failed, "dry_run": False}
 
@@ -796,25 +795,13 @@ def sync_missing_tables_between_databases(
         try:
             with engine.begin() as conn:
                 # CREATE TABLE target.tbl LIKE source.tbl (identifiers validated above)
-                conn.execute(
-                    text(
-                        f"CREATE TABLE IF NOT EXISTS `{target_db}`.`{tbl}` "
-                        f"LIKE `{source_db}`.`{tbl}`"
-                    )
-                )
+                conn.execute(text(f"CREATE TABLE IF NOT EXISTS `{target_db}`.`{tbl}` LIKE `{source_db}`.`{tbl}`"))
                 if copy_data:
-                    conn.execute(
-                        text(
-                            f"INSERT INTO `{target_db}`.`{tbl}` "
-                            f"SELECT * FROM `{source_db}`.`{tbl}`"
-                        )
-                    )
+                    conn.execute(text(f"INSERT INTO `{target_db}`.`{tbl}` SELECT * FROM `{source_db}`.`{tbl}`"))
             synced.append(tbl)
         except Exception as e:
             failed[tbl] = str(e)
-            db_management_logger.warning(
-                f"Failed to sync table '{tbl}' from {source_db} to {target_db}: {e}"
-            )
+            db_management_logger.warning(f"Failed to sync table '{tbl}' from {source_db} to {target_db}: {e}")
 
     return {"synced": synced, "failed": failed, "dry_run": False}
 
@@ -857,9 +844,7 @@ def sync_missing_tables_from_environment(
         target_db = details["target_database"]
         missing = details["tables_missing_in_target"]
 
-        result = sync_missing_tables_between_databases(
-            source_db, target_db, missing, copy_data=copy_data, apply=True
-        )
+        result = sync_missing_tables_between_databases(source_db, target_db, missing, copy_data=copy_data, apply=True)
         synced_tables[base_name] = result["synced"]
         if result["failed"]:
             failed_tables[base_name] = result["failed"]
@@ -980,6 +965,7 @@ def create_test_environment(
 
     created = {}
     for base_name, source_db_name in source_dbs.items():
+        print(f"Processing base database '{base_name}' for environment '{environment}'...")
         if base_name in exclude:
             continue
 
@@ -1003,17 +989,13 @@ def __main__():
     """CLI entry point for creating and deleting test environments."""
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Manage test database environments: create or delete."
-    )
+    parser = argparse.ArgumentParser(description="Manage test database environments: create or delete.")
 
     # Create subcommands
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
     # Create environment command
-    create_parser = subparsers.add_parser(
-        "create", help="Create a test environment by cloning prod schemas."
-    )
+    create_parser = subparsers.add_parser("create", help="Create a test environment by cloning prod schemas.")
     create_parser.add_argument(
         "--env",
         required=True,
@@ -1027,9 +1009,7 @@ def __main__():
     )
 
     group = create_parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--schema-only", action="store_true", help="Clone schema only (default)."
-    )
+    group.add_argument("--schema-only", action="store_true", help="Clone schema only (default).")
     group.add_argument("--with-data", action="store_true", help="Clone schema + data.")
 
     create_parser.add_argument(
@@ -1040,9 +1020,7 @@ def __main__():
     )
 
     # Delete environment command
-    delete_parser = subparsers.add_parser(
-        "delete", help="Delete one or more test environments."
-    )
+    delete_parser = subparsers.add_parser("delete", help="Delete one or more test environments.")
     delete_parser.add_argument(
         "--delete-env",
         nargs="+",
@@ -1056,9 +1034,7 @@ def __main__():
     )
 
     # Diff command: compare two environments
-    diff_parser = subparsers.add_parser(
-        "diff", help="Show what target env is missing vs source (DBs and tables)."
-    )
+    diff_parser = subparsers.add_parser("diff", help="Show what target env is missing vs source (DBs and tables).")
     diff_parser.add_argument(
         "--source-env",
         required=True,
@@ -1118,9 +1094,7 @@ def __main__():
 
     elif args.command == "delete":
         try:
-            deleted = delete_environment(
-                environments=args.delete_env, confirm=args.confirm
-            )
+            deleted = delete_environment(environments=args.delete_env, confirm=args.confirm)
 
             # Print results
             if deleted:
@@ -1149,12 +1123,8 @@ def __main__():
 
     elif args.command == "diff":
         diff = diff_environments(args.source_env, args.target_env)
-        db_management_logger.info(
-            f"Diff source={diff.source_environment} target={diff.target_environment}"
-        )
-        db_management_logger.info(
-            "Missing databases (base -> source DB): %s", diff.missing_databases
-        )
+        db_management_logger.info(f"Diff source={diff.source_environment} target={diff.target_environment}")
+        db_management_logger.info("Missing databases (base -> source DB): %s", diff.missing_databases)
         for base, details in diff.table_differences.items():
             db_management_logger.info(
                 "  %s: tables missing in target: %s",
