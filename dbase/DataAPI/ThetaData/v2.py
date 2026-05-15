@@ -2117,12 +2117,19 @@ def retrieve_chain_bulk(
     }
     if not proxy:
         proxy = get_proxy_url()
+    is_today = pd.to_datetime(end_date).date() == datetime.now().date()
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     end_date = int(pd.to_datetime(end_date).strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d")) if exp else 0
     start_date = int(pd.to_datetime(start_date).strftime("%Y%m%d"))
     end_time = str(convert_time_to_miliseconds(end_time))
-    url = f"http://127.0.0.1:25510/v2/bulk_at_time/option/{'quote' if not oi else 'open_interest'}"
+    
+    if is_today:
+        print("Using snapshot endpoint for bulk chain retrieval since end_date is today")
+        url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/quote"
+    else:
+        print("Using historical endpoint for bulk chain retrieval since end_date is not today")
+        url = f"http://127.0.0.1:25510/v2/bulk_at_time/option/{'quote' if not oi else 'open_interest'}"
     querystring = {
         "root": symbol,
         "exp": exp,

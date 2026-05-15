@@ -282,6 +282,7 @@ from dbase.DataAPI.ThetaData.v3.vars import (
     SETTINGS,
     OI_URL,
     LIST_DATES,
+    SNAPSHOT_QUOTES,
 )
 from dbase.DataAPI.ThetaData.utils import (
     _handle_opttick_param,
@@ -1063,7 +1064,9 @@ def _raw_retrieve_chain_bulk(
             strike=strike,
             time_of_day=end_time,
         )
-        txt = _fetch_data(LIST_CONTRACTS_QUOTE, params, print_url=print_url)
+        is_today = pd.to_datetime(date, format="%Y-%m-%d").date() == pd.Timestamp.now().date()
+        endpoint = SNAPSHOT_QUOTES if is_today else LIST_CONTRACTS_QUOTE
+        txt = _fetch_data(endpoint, params, print_url=print_url)
         data = _parse_csv_to_dataframe(txt)
 
     if "timestamp" not in data.columns:
