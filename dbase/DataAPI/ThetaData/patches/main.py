@@ -60,7 +60,7 @@ class ThetaDataPatchProcessor:
                 if result is not None:
                     return result
         else:
-            logger.warning(f"No patches registered for {func_name}")
+            logger.info(f"No patches registered for {func_name}")
         return result
     
     @classmethod

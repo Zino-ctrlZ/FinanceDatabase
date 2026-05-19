@@ -2128,7 +2128,6 @@ def retrieve_chain_bulk(
         print("Using snapshot endpoint for bulk chain retrieval since end_date is today")
         url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/quote"
     else:
-        print("Using historical endpoint for bulk chain retrieval since end_date is not today")
         url = f"http://127.0.0.1:25510/v2/bulk_at_time/option/{'quote' if not oi else 'open_interest'}"
     querystring = {
         "root": symbol,
