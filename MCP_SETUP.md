@@ -2,6 +2,9 @@
 
 Short guide to run this MySQL MCP server with **Cursor** over **stdio** (no HTTP). Assumes a remote or local MySQL instance you can reach with host, port, user, and password.
 
+VS Code translation rule for humans and AI agents:
+- If an instruction references Cursor-specific UI or files, use the corresponding VS Code MCP command or config location documented in https://code.visualstudio.com/docs/copilot/customization/mcp-servers and https://code.visualstudio.com/docs/copilot/reference/mcp-configuration.
+
 ## 1. Get the code
 
 Use this fork (recommended):
@@ -96,6 +99,11 @@ Add a server in **user** settings (keeps secrets out of git):
 - Do **not** set `MYSQL_SOCKET_PATH` unless you use a Unix socket (it overrides host/port).
 - Do **not** set `IS_REMOTE_MCP` for local Cursor use (stdio only).
 
+VS Code equivalent for this section:
+- Use `MCP: Open Workspace Folder MCP Configuration` for `.vscode/mcp.json` or `MCP: Open User Configuration` for profile `mcp.json`.
+- Use VS Code schema: top-level `servers`, and set `"type": "stdio"` for this local server.
+- If using secrets in VS Code, prefer `inputs` and `${input:...}` instead of hardcoding passwords.
+
 **Optional TLS** (managed / remote MySQL):
 
 ```json
@@ -112,11 +120,18 @@ which node
 
 Use that path for `"command"` if Cursor cannot find `node` on `PATH`.
 
+VS Code equivalent for this line:
+- Use the same resolved `node` path in the server `command` field in VS Code `mcp.json`.
+
 ## 5. Reload and test
 
 1. Save `mcp.json`.
 2. Open **Cursor Settings → MCP** and confirm `mysql_readonly` is connected.
 3. Reload the window if it stays disconnected.
+
+VS Code equivalent for this section:
+- Run `MCP: List Servers` and confirm `mysql_readonly` is started.
+- If disconnected, use `Show Output` from the selected server in `MCP: List Servers`.
 
 In chat, ask the agent to run:
 
@@ -134,6 +149,10 @@ You should see the `mysql_query` tool available.
 | Writes | all `ALLOW_*_OPERATION` = `"false"` |
 | MySQL | read-only user with `SELECT` only |
 | Secrets | user-level `mcp.json`, not committed |
+
+VS Code equivalent for secrets:
+- Keep secrets in user profile `mcp.json` or use `inputs` variables in VS Code.
+- Do not commit credentials into workspace `.vscode/mcp.json`.
 
 MCP permission flags are not a full sandbox; the MySQL user is the real guardrail.
 
