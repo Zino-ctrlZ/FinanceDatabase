@@ -747,7 +747,8 @@ def list_dates(
     return _apply_patches("list_dates", res, **params, **kwargs)
 
 
-def ping_proxy(*args, **kwargs):
+def ping_proxy(*args, detail: bool = False, **kwargs):
+    """Health-check proxy POST wrapper and Theta status_code (200 required)."""
     use_v2 = _use_v2()
     _log_call("ping_proxy", use_v2)
     if use_v2:
@@ -759,7 +760,12 @@ def ping_proxy(*args, **kwargs):
 
         res = ping_proxy_v3(*args, **kwargs)
 
-    return _apply_patches("ping_proxy", res, *args, **kwargs)
+    res = _apply_patches("ping_proxy", res, *args, **kwargs)
+    if detail:
+        return res
+    if hasattr(res, "ok"):
+        return res.ok
+    return bool(res)
 
 
 def quote_to_eod_patch(

@@ -978,8 +978,8 @@ Fill missing OHLC columns by copying from another column.
 #### `set_use_proxy(use_proxy: bool)`
 Enable or disable proxy usage.
 
-#### `ping_proxy() -> bool`
-Test if proxy server is reachable.
+#### `ping_proxy(detail=False) -> bool | PingProxyResult`
+Health-check the proxy POST wrapper (HTTP 200) and Theta ``status_code`` (200). With ``detail=True``, returns ``PingProxyResult`` with ``proxy_http_status``, ``theta_status_code``, and ``message()``.
 
 #### `get_proxy_url() -> str | None`
 Get currently configured proxy URL.

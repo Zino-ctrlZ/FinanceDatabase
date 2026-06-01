@@ -52,7 +52,7 @@ from .switcher import (
     ping_proxy,
     quote_to_eod_patch,
 )
-from .proxy import set_use_proxy, set_should_schedule, get_proxy_url
+from .proxy import PingProxyResult, set_use_proxy, set_should_schedule, get_proxy_url
 from .utils import (
     resample,
     bootstrap_ohlc,
@@ -99,6 +99,7 @@ __all__ = [
     "list_contracts",
     "list_dates",
     "ping_proxy",
+    "PingProxyResult",
     "set_use_proxy",
     "get_proxy_url",
     "resample",

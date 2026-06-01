@@ -67,9 +67,11 @@ refresh_proxy_url() -> None
     Reload proxy URL from PROXY_URL environment variable.
     Called automatically when enabling proxy.
 
-ping_proxy() -> bool
-    Test connectivity to configured proxy server.
-    Returns True if proxy responds successfully, False otherwise.
+ping_proxy_v2() / ping_proxy_v3() -> PingProxyResult
+    Test proxy POST wrapper (HTTP 200) and Theta ``status_code`` (200) on a list endpoint.
+
+ping_proxy() (via switcher, default) -> bool
+    True only when both proxy wrapper and Theta return success. Use ``detail=True`` for PingProxyResult.
 
 get_should_schedule() -> bool
     Check if request scheduling is enabled.
@@ -212,11 +214,56 @@ Notes
 - Always test proxy connectivity before production use
 """
 
-from trade.helpers.Logging import setup_logger
+from __future__ import annotations
+
+from dataclasses import dataclass
 import os
+from typing import Optional
+
 import requests
 
+from trade.helpers.Logging import setup_logger
+
 logger = setup_logger("dbase.DataAPI.ThetaData.proxy", stream_log_level="INFO")
+
+# Lightweight Theta endpoints used for health checks (not portfolio quote paths).
+V2_PING_THETA_URL = "http://127.0.0.1:25510/v2/list/roots/stock?use_csv=true"
+V3_PING_THETA_URL = "http://127.0.0.1:25503/v3/stock/list/symbols"
+
+
+@dataclass(frozen=True)
+class PingProxyResult:
+    """Result of a proxy + ThetaData health check."""
+
+    ok: bool
+    proxy_http_status: Optional[int]
+    proxy_ok: bool
+    theta_status_code: Optional[int]
+    theta_ok: bool
+    theta_url: str
+    error: Optional[str] = None
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+    def message(self) -> str:
+        proxy_part = (
+            f"proxy HTTP {self.proxy_http_status}"
+            if self.proxy_http_status is not None
+            else "proxy HTTP (no response)"
+        )
+        proxy_state = "OK" if self.proxy_ok else "FAIL"
+        if self.theta_status_code is not None:
+            theta_part = f"Theta status {self.theta_status_code}"
+        else:
+            theta_part = "Theta status (unavailable)"
+        theta_state = "OK" if self.theta_ok else "FAIL"
+        base = f"{proxy_part} [{proxy_state}]; {theta_part} [{theta_state}]"
+        if self.error:
+            return f"{base} — {self.error}"
+        if self.ok:
+            return f"{base} — connected"
+        return f"{base} — not connected"
 _SHOULD_SCHEDULE = True
 proxy_url = None  ## Initial initiation
 
@@ -263,35 +310,99 @@ def set_use_proxy(use_proxy: bool):
 refresh_proxy_url()  ## Refreshing proxy url
 
 
-def ping_proxy_v2():
-    logger.info("Pinging proxy v2")
+def _evaluate_proxy_ping(response: requests.Response, theta_url: str) -> PingProxyResult:
+    """Parse proxy POST wrapper and embedded Theta status_code."""
+    proxy_http_status = response.status_code
+    proxy_ok = proxy_http_status == 200
+    if not proxy_ok:
+        return PingProxyResult(
+            ok=False,
+            proxy_http_status=proxy_http_status,
+            proxy_ok=False,
+            theta_status_code=None,
+            theta_ok=False,
+            theta_url=theta_url,
+            error=f"Proxy wrapper returned HTTP {proxy_http_status}",
+        )
+
     try:
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        payload = {
-            "method": "GET",
-            "url": "http://127.0.0.1:25510/v2/stock/list/symbols",
-        }
-        proxy_url = os.environ["PROXY_URL"]
-        response = requests.post(proxy_url, headers=headers, json=payload)
-        return response.status_code == 200
-    except Exception as e:  # noqa
-        return False
+        body = response.json()
+    except ValueError as exc:
+        return PingProxyResult(
+            ok=False,
+            proxy_http_status=proxy_http_status,
+            proxy_ok=True,
+            theta_status_code=None,
+            theta_ok=False,
+            theta_url=theta_url,
+            error=f"Proxy response is not JSON: {exc}",
+        )
+
+    theta_status_code = body.get("status_code")
+    theta_ok = theta_status_code == 200
+    ok = proxy_ok and theta_ok
+    error = None
+    if not theta_ok:
+        data_msg = body.get("data")
+        if data_msg is not None:
+            error = str(data_msg).strip()[:300] or None
+        if error is None and theta_status_code is not None:
+            error = f"Theta returned status {theta_status_code}"
+
+    return PingProxyResult(
+        ok=ok,
+        proxy_http_status=proxy_http_status,
+        proxy_ok=proxy_ok,
+        theta_status_code=theta_status_code,
+        theta_ok=theta_ok,
+        theta_url=theta_url,
+        error=error,
+    )
 
 
-def ping_proxy_v3():
-    logger.info("Pinging proxy v3")
+def _ping_proxy(theta_url: str, label: str) -> PingProxyResult:
+    instance_url = get_proxy_url() or get_proxy_url_from_env()
+    if not instance_url:
+        return PingProxyResult(
+            ok=False,
+            proxy_http_status=None,
+            proxy_ok=False,
+            theta_status_code=None,
+            theta_ok=False,
+            theta_url=theta_url,
+            error="PROXY_URL is not configured",
+        )
+
+    logger.info("Pinging proxy %s via %s", label, instance_url)
     try:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        payload = {
-            "method": "GET",
-            "url": "http://127.0.0.1:25503/v3/stock/list/symbols",
-        }
-        proxy_url = os.environ["PROXY_URL"]
-        response = requests.post(proxy_url, headers=headers, json=payload)
-        print("v3 response: ", response.json())
-        return response.status_code == 200
-    except Exception as e:  # noqa
-        return False
+        payload = {"method": "GET", "url": theta_url}
+        response = requests.post(instance_url, headers=headers, json=payload, timeout=30)
+        result = _evaluate_proxy_ping(response, theta_url)
+        if result.ok:
+            logger.info("Proxy ping OK: %s", result.message())
+        else:
+            logger.warning("Proxy ping failed: %s", result.message())
+        return result
+    except requests.RequestException as exc:
+        logger.warning("Proxy ping request failed: %s", exc)
+        return PingProxyResult(
+            ok=False,
+            proxy_http_status=None,
+            proxy_ok=False,
+            theta_status_code=None,
+            theta_ok=False,
+            theta_url=theta_url,
+            error=str(exc),
+        )
+
+
+def ping_proxy_v2() -> PingProxyResult:
+    return _ping_proxy(V2_PING_THETA_URL, "v2")
+
+
+def ping_proxy_v3() -> PingProxyResult:
+    return _ping_proxy(V3_PING_THETA_URL, "v3")
 
 
 if get_proxy_url() is None:
