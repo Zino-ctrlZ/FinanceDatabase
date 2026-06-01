@@ -5,6 +5,7 @@ This module provides functions to clone database schemas from production
 to test environments using mysqldump and mysql restore.
 """
 
+import json
 import os
 import re
 import shutil
@@ -20,10 +21,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from .db_utils import Database
-from .SQLHelpers import get_engine, sql_host, sql_user, sql_pw, sql_port
+from .SQLHelpers import create_engine_short, get_engine, sql_host, sql_user, sql_pw, sql_port
 from trade.helpers.helper import setup_logger
 
 db_management_logger = setup_logger("dbase.database.db_management", stream_log_level="INFO", file_log_level="DEBUG")
+
+BOT_CONFIG_TABLES = ("discord_channels", "bot_identity", "bot_clients")
+
+DB_PROTECTED_ENVIRONMENTS = "DB_PROTECTED_ENVIRONMENTS"
 
 
 def validate_database_input(value: str) -> None:
@@ -48,6 +53,57 @@ def validate_database_input(value: str) -> None:
     # Validate format: alphanumeric with underscores/hyphens only
     if not re.match(r"^[a-zA-Z0-9_-]+$", value):
         raise ValueError("Value must contain only alphanumeric characters, underscores, or hyphens")
+
+
+def _parse_protected_environments_raw(raw: str) -> list[str]:
+    """Parse DB_PROTECTED_ENVIRONMENTS value (JSON array or comma-separated names)."""
+    raw = raw.strip()
+    if not raw:
+        return []
+
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"{DB_PROTECTED_ENVIRONMENTS} must be a JSON array of strings, "
+                f'e.g. \'["prod","long_bbands"]\': {e}'
+            ) from e
+        if not isinstance(parsed, list):
+            raise ValueError(f"{DB_PROTECTED_ENVIRONMENTS} JSON value must be an array of strings")
+        names: list[str] = []
+        for item in parsed:
+            if not isinstance(item, str):
+                raise ValueError(f"{DB_PROTECTED_ENVIRONMENTS} JSON array must contain only strings")
+            names.append(item.strip())
+    else:
+        names = [part.strip() for part in raw.split(",")]
+
+    return [name for name in names if name]
+
+
+def get_protected_environments() -> list[str]:
+    """
+    Environment names that cannot be deleted programmatically.
+
+    Reads ``DB_PROTECTED_ENVIRONMENTS``: a JSON array (e.g. ``["prod","long_bbands"]``)
+    or comma-separated list (e.g. ``prod,long_bbands``). When unset or empty after parse,
+    no environments are protected. Each name is validated with :func:`validate_database_input`.
+    """
+    raw = os.environ.get(DB_PROTECTED_ENVIRONMENTS)
+    if raw is None or not raw.strip():
+        names: list[str] = []
+    else:
+        names = _parse_protected_environments_raw(raw)
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for name in names:
+        validate_database_input(name)
+        if name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
 
 
 def get_databases_for_environment(environment: str) -> dict[str, str]:
@@ -468,7 +524,9 @@ def list_environments(exclude_prod: bool = True) -> list[str]:
     List all unique environments from master_config.database_configs.
 
     Args:
-        exclude_prod: If True, filters out 'prod' environment
+        exclude_prod: If True, filters out all protected environments (see
+            :func:`get_protected_environments` / ``DB_PROTECTED_ENVIRONMENTS``).
+            Parameter name kept for backward compatibility.
 
     Returns:
         Sorted list of environment names
@@ -489,7 +547,8 @@ def list_environments(exclude_prod: bool = True) -> list[str]:
     environments = result["environment"].tolist()
 
     if exclude_prod:
-        environments = [env for env in environments if env != "prod"]
+        protected = set(get_protected_environments())
+        environments = [env for env in environments if env not in protected]
 
     return sorted(environments)
 
@@ -648,17 +707,21 @@ def delete_environment(environments: list[str], confirm: bool = False) -> dict[s
         Nested dict: {environment: {base_name: database_name}} of deleted databases
 
     Raises:
-        ValueError: If any environment is 'prod' or if user cancels deletion
+        ValueError: If any environment is protected (see ``DB_PROTECTED_ENVIRONMENTS``)
+            or if user cancels deletion
         RuntimeError: If database deletion fails (partial failures continue)
     """
     # Validate all environment names
     for env in environments:
         validate_database_input(env)
 
-    # Safety check: prod can never be deleted programmatically
-    if "prod" in environments:
+    protected = set(get_protected_environments())
+    blocked = [env for env in environments if env in protected]
+    if blocked:
+        blocked_str = ", ".join(blocked)
         raise ValueError(
-            "Production environment cannot be deleted programmatically. Remove 'prod' from the environments list."
+            f"Cannot delete protected environment(s): {blocked_str}. "
+            f"Remove them from the environments list or adjust {DB_PROTECTED_ENVIRONMENTS}."
         )
 
     # Collect all databases across all environments
@@ -925,20 +988,161 @@ def sync_environment_from_source(
     return result
 
 
+def bot_config_table_row_counts(portfolio_config_db: str) -> dict[str, int]:
+    """
+    Return row counts for bot config tables in a physical portfolio_config database.
+
+    Args:
+        portfolio_config_db: Physical MySQL database name (e.g. portfolio_config_scratch).
+
+    Returns:
+        Mapping of table name -> row count for discord_channels, bot_identity, bot_clients.
+    """
+    validate_database_input(portfolio_config_db)
+    counts: dict[str, int] = {}
+    engine = create_engine_short(portfolio_config_db)
+    with engine.connect() as conn:
+        for table in BOT_CONFIG_TABLES:
+            result = conn.execute(text(f"SELECT COUNT(*) AS n FROM `{table}`"))
+            counts[table] = int(result.scalar() or 0)
+    return counts
+
+
+def log_empty_bot_config_hint_after_create(
+    *,
+    target_environment: str,
+    source_environment: str,
+    created: dict[str, str],
+    schema_only: bool,
+) -> None:
+    """
+    After schema-only create, log seed/verify commands when bot tables exist but have 0 rows.
+
+    Informational only; failures are logged at DEBUG and do not affect create.
+    """
+    if not schema_only:
+        return
+    portfolio_config_db = created.get(Database.PORTFOLIO_CONFIG)
+    if not portfolio_config_db:
+        return
+    try:
+        counts = bot_config_table_row_counts(portfolio_config_db)
+        if any(counts.values()):
+            return
+        db_management_logger.info(
+            "portfolio_config bot tables are empty (schema-only create). "
+            "Seed bot config manually, then verify:\n"
+            f"  python -m algo.tools.seed_bot_config --env {target_environment} "
+            f"--from-source-env {source_environment}\n"
+            f"  # or: --from-yaml --persona tinubu|emefiele\n"
+            f"  python -m algo.tools.verify_bot_config --env {target_environment}"
+        )
+    except Exception as e:
+        db_management_logger.debug("Could not log empty bot config hint: %s", e)
+
+
+def resolve_physical_database_name(base_name: str, environment: str) -> str:
+    """Map base_name + environment to the physical MySQL database name."""
+    validate_database_input(base_name)
+    validate_database_input(environment)
+    if environment == "prod":
+        return base_name
+    return f"{base_name}_{environment}"
+
+
+def mysql_database_exists(database_name: str) -> bool:
+    """Return True if a schema with this name exists in MySQL."""
+    validate_database_input(database_name)
+    query = text("""
+        SELECT SCHEMA_NAME
+        FROM information_schema.SCHEMATA
+        WHERE SCHEMA_NAME = :db_name
+    """)
+    engine = get_engine("master_config")
+    result = pd.read_sql(query, engine, params={"db_name": database_name})
+    return not result.empty
+
+
+def _resolve_branch_name_cli(branch: Optional[str]) -> str:
+    if branch:
+        validate_database_input(branch)
+        return branch
+    from trade.helpers.git import git_get_current_branch
+
+    repo_path = os.environ.get("ALGO_DIR", ".")
+    return git_get_current_branch(repo_path)
+
+
+def create_database_for_environment(
+    *,
+    base_name: str,
+    environment: str,
+    branch_name: Optional[str] = None,
+    dry_run: bool = False,
+) -> str:
+    """
+    Create an empty MySQL database and register it in master_config.database_configs.
+
+    Does not clone schema from another environment.
+
+    Returns:
+        Physical database_name created (or would create when dry_run=True).
+    """
+    validate_database_input(base_name)
+    validate_database_input(environment)
+    if branch_name:
+        validate_database_input(branch_name)
+
+    if base_name in Database.EXCLUDED_DATABASES:
+        raise ValueError(f"Cannot create protected database base name: {base_name}")
+
+    database_name = resolve_physical_database_name(base_name, environment)
+
+    if dry_run:
+        db_management_logger.info(
+            "Dry run: would CREATE DATABASE `%s` DEFAULT CHARACTER SET utf8; "
+            "register base_name=%r environment=%r branch_name=%r",
+            database_name,
+            base_name,
+            environment,
+            branch_name,
+        )
+        return database_name
+
+    if mysql_database_exists(database_name):
+        raise ValueError(f"MySQL database '{database_name}' already exists")
+
+    check_database_conflict(database_name)
+
+    engine = create_engine_short("master_config")
+    create_sql = text(f"CREATE DATABASE IF NOT EXISTS `{database_name}` DEFAULT CHARACTER SET utf8")
+    with engine.begin() as conn:
+        conn.execute(create_sql)
+
+    register_database(database_name, base_name, environment, branch_name)
+    db_management_logger.info(
+        "Created database '%s' (base_name=%r, environment=%r)",
+        database_name,
+        base_name,
+        environment,
+    )
+    return database_name
+
+
 def create_test_environment(
     environment: str,
     branch_name: str,
-    source_environment: str = "prod",
+    source_environment: str,
     exclude_databases: Optional[list[str]] = None,
     schema_only: bool = True,
 ) -> dict[str, str]:
     """
-    Create test environment by cloning prod schemas.
+    Create an environment by cloning schemas (and optionally data) from a source environment.
 
     Args:
         environment: Target environment name (e.g., 'test-mean-reversion')
         branch_name: Git branch name
-        source_environment: Source environment to clone from (default: 'prod')
+        source_environment: Source environment to clone from (required; e.g. long_bbands_v2)
         exclude_databases: Additional databases to exclude
         schema_only: If True, clone schema only; if False, clone schema + data
 
@@ -954,6 +1158,8 @@ def create_test_environment(
     validate_database_input(environment)
     if branch_name:
         validate_database_input(branch_name)
+    if not source_environment:
+        raise ValueError("source_environment is required")
     validate_database_input(source_environment)
 
     exclude = set(Database.EXCLUDED_DATABASES)
@@ -985,8 +1191,8 @@ def create_test_environment(
     return created
 
 
-def __main__():
-    """CLI entry point for creating and deleting test environments."""
+def build_cli_parser() -> "argparse.ArgumentParser":
+    """Build CLI argument parser (used by __main__ and tests)."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Manage test database environments: create or delete.")
@@ -995,7 +1201,10 @@ def __main__():
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
 
     # Create environment command
-    create_parser = subparsers.add_parser("create", help="Create a test environment by cloning prod schemas.")
+    create_parser = subparsers.add_parser(
+        "create",
+        help="Create an environment by cloning schemas/data from a required source environment.",
+    )
     create_parser.add_argument(
         "--env",
         required=True,
@@ -1004,8 +1213,8 @@ def __main__():
     create_parser.add_argument("--branch", required=True, help="Git branch name.")
     create_parser.add_argument(
         "--source-env",
-        default="prod",
-        help="Source environment to clone from (default: prod).",
+        required=True,
+        help="Source environment to clone from (required; e.g. long_bbands_v2).",
     )
 
     group = create_parser.add_mutually_exclusive_group()
@@ -1032,6 +1241,8 @@ def __main__():
         action="store_true",
         help="Skip confirmation prompt and proceed with deletion.",
     )
+
+    subparsers.add_parser("list", help="List non-production environments.")
 
     # Diff command: compare two environments
     diff_parser = subparsers.add_parser("diff", help="Show what target env is missing vs source (DBs and tables).")
@@ -1070,6 +1281,33 @@ def __main__():
         help="Apply changes. Default is dry run.",
     )
 
+    create_db_parser = subparsers.add_parser(
+        "create-db",
+        help="Create an empty database and register it in master_config (no schema clone).",
+    )
+    create_db_parser.add_argument("--env", required=True, help="Environment name (e.g. scratch, prod).")
+    create_db_parser.add_argument(
+        "--name",
+        required=True,
+        help="Base database name (e.g. portfolio_config, portfolio_data).",
+    )
+    create_db_parser.add_argument(
+        "--branch",
+        default=None,
+        help="Git branch for registry (default: current branch from ALGO_DIR or '.').",
+    )
+    create_db_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Log planned CREATE and registry only; do not apply.",
+    )
+
+    return parser
+
+
+def __main__():
+    """CLI entry point for creating and deleting test environments."""
+    parser = build_cli_parser()
     args = parser.parse_args()
 
     if args.command == "create":
@@ -1091,6 +1329,13 @@ def __main__():
         # Print in a deterministic / machine-readable way
         for base_name, db_name in created.items():
             db_management_logger.info(f"{base_name} -> {db_name}")
+
+        log_empty_bot_config_hint_after_create(
+            target_environment=args.env,
+            source_environment=args.source_env,
+            created=created,
+            schema_only=schema_only,
+        )
 
     elif args.command == "delete":
         try:
@@ -1115,11 +1360,17 @@ def __main__():
     elif args.command == "list":
         envs = list_environments(exclude_prod=True)
         if envs:
-            db_management_logger.info("Available non-production environments:")
+            db_management_logger.info(
+                "Available environments (protected excluded; see %s):",
+                DB_PROTECTED_ENVIRONMENTS,
+            )
             for env in envs:
                 db_management_logger.info(f"  - {env}")
         else:
-            db_management_logger.info("No non-production environments found.")
+            db_management_logger.info(
+                "No environments found (protected excluded; see %s).",
+                DB_PROTECTED_ENVIRONMENTS,
+            )
 
     elif args.command == "diff":
         diff = diff_environments(args.source_env, args.target_env)
@@ -1131,6 +1382,16 @@ def __main__():
                 base,
                 details["tables_missing_in_target"],
             )
+
+    elif args.command == "create-db":
+        branch = _resolve_branch_name_cli(args.branch)
+        database_name = create_database_for_environment(
+            base_name=args.name,
+            environment=args.env,
+            branch_name=branch,
+            dry_run=args.dry_run,
+        )
+        db_management_logger.info("%s -> %s", args.name, database_name)
 
     elif args.command == "sync":
         if not args.apply:

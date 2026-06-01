@@ -37,9 +37,11 @@ from .db_utils import (
 
 # Import from db_management - schema cloning, deletion, and env diff/sync
 from .db_management import (
+    create_database_for_environment,
     create_test_environment,
     delete_environment,
     diff_environments,
+    get_protected_environments,
     list_environments,
     create_missing_databases_from_environment,
     sync_missing_tables_from_environment,
@@ -74,9 +76,11 @@ __all__ = [
     "get_current_environment",
     "get_current_branch_name",
     # Database Management exports
+    "create_database_for_environment",
     "create_test_environment",
     "delete_environment",
     "diff_environments",
+    "get_protected_environments",
     "list_environments",
     "create_missing_databases_from_environment",
     "sync_missing_tables_from_environment",
