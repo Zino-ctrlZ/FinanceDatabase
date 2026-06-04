@@ -248,6 +248,116 @@ def clear_table_data(db: str, table_name: str) -> bool:
             return False
 
 
+def delete_from_table(
+    db: str,
+    table_name: str,
+    filters: dict,
+    *,
+    debug: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Delete rows from a table using equality filters (AND-combined).
+
+    Parameters
+    ----------
+    db : str
+        Base database name (resolved via get_database_name).
+    table_name : str
+        Table to delete from.
+    filters : dict
+        Column -> value filters. For IN filters, pass a list/tuple/set:
+        {"status": ["open", "pending"], "trade_id": "T123"}
+    debug : bool
+        Log query and match count.
+    dry_run : bool
+        Count matching rows without deleting.
+
+    Returns
+    -------
+    dict
+        Contains 'success', 'rows_deleted', 'rows_matched', 'error', and optional 'debug_info'.
+    """
+    if not filters:
+        raise ValueError(
+            "filters must not be empty (use clear_table_data() to delete all rows)"
+        )
+
+    engine = get_engine(db)
+
+    where_parts = []
+    params = {}
+
+    for col, val in filters.items():
+        if isinstance(val, (list, tuple, set)):
+            if not val:
+                raise ValueError(f"Empty filter list for column '{col}'")
+            placeholders = ", ".join(f":cond_{col}_{i}" for i in range(len(val)))
+            where_parts.append(f"{col} IN ({placeholders})")
+            for i, item in enumerate(val):
+                params[f"cond_{col}_{i}"] = item
+        else:
+            where_parts.append(f"{col} = :cond_{col}")
+            params[f"cond_{col}"] = val
+
+    where_clause = " AND ".join(where_parts)
+    check_query = text(f"SELECT COUNT(*) AS cnt FROM {table_name} WHERE {where_clause}")
+    delete_query = text(f"DELETE FROM {table_name} WHERE {where_clause}")
+
+    result_info = {
+        "success": False,
+        "rows_deleted": 0,
+        "rows_matched": 0,
+        "error": None,
+    }
+
+    try:
+        with engine.begin() as conn:
+            rows_matched = conn.execute(check_query, params).scalar()
+            result_info["rows_matched"] = rows_matched
+
+            if debug or rows_matched == 0:
+                debug_info = {
+                    "query": f"DELETE FROM {table_name} WHERE {where_clause}",
+                    "params": params,
+                    "rows_matching_condition": rows_matched,
+                    "dry_run": dry_run,
+                }
+                result_info["debug_info"] = debug_info
+                logger.info(f"[DEBUG] Query: {debug_info['query']}")
+                logger.info(f"[DEBUG] Params: {debug_info['params']}")
+                logger.info(f"[DEBUG] Rows matching WHERE condition: {rows_matched}")
+
+            if rows_matched == 0:
+                result_info["error"] = (
+                    f"No rows found in {table_name} matching filters: {filters}"
+                )
+                logger.warning(result_info["error"])
+                print(f"No rows found matching filters in {table_name}", end="\r")
+                return result_info
+
+            if dry_run:
+                result_info["success"] = True
+                return result_info
+
+            res = conn.execute(delete_query, params)
+            result_info["rows_deleted"] = res.rowcount
+            result_info["success"] = res.rowcount > 0
+
+            if res.rowcount > 0:
+                logger.info(f"Deleted {res.rowcount} rows from {table_name} in {db}.")
+                print(f"Deleted {res.rowcount} rows from {table_name}.", end="\r")
+            else:
+                result_info["error"] = (
+                    f"Delete matched {rows_matched} row(s) but affected 0 rows in {table_name}"
+                )
+    except SQLAlchemyError as exc:
+        result_info["error"] = str(exc)
+        logger.error(f"Failed to delete from {table_name} in {db}: {exc}")
+
+    return result_info
+
+
 def store_SQL_data(db, sql_table_name, data, if_exists="append"):
     """
     Store data in a SQL table. If the table does not exist, it will be created.
@@ -588,7 +698,7 @@ def dynamic_batch_update(db, table_name, update_values, condition, debug=False):
     - debug: If True, print diagnostic information including the query and whether matching rows exist.
 
     Returns:
-    - dict: Contains 'success' (bool), 'rows_updated' (int), 'rows_matched' (int), and optional 'debug_info'
+    - dict: Contains 'success' (bool), 'rows_updated' (int), 'rows_matched' (int), 'error', and optional 'debug_info'
     """
     engine = get_engine(db)
 
@@ -608,48 +718,60 @@ def dynamic_batch_update(db, table_name, update_values, condition, debug=False):
     # Combine parameters for execution
     params = {**update_values, **{f"cond_{col}": val for col, val in condition.items()}}
 
-    result_info = {"success": False, "rows_updated": 0, "rows_matched": 0}
+    result_info = {
+        "success": False,
+        "rows_updated": 0,
+        "rows_matched": 0,
+        "error": None,
+    }
 
-    with engine.begin() as conn:
-        # First, check if rows matching the condition exist
-        check_query = text(
-            f"SELECT COUNT(*) as cnt FROM {table_name} WHERE {where_clause}"
-        )
-        check_params = {f"cond_{col}": val for col, val in condition.items()}
-        check_result = conn.execute(check_query, check_params)
-        rows_matched = check_result.scalar()
-        result_info["rows_matched"] = rows_matched
-
-        if debug or rows_matched == 0:
-            debug_info = {
-                "query": f"UPDATE {table_name} SET {set_clause} WHERE {where_clause}",
-                "params": params,
-                "rows_matching_condition": rows_matched,
-            }
-            result_info["debug_info"] = debug_info
-            logger.info(f"[DEBUG] Query: {debug_info['query']}")
-            logger.info(f"[DEBUG] Params: {debug_info['params']}")
-            logger.info(f"[DEBUG] Rows matching WHERE condition: {rows_matched}")
-
-        if rows_matched == 0:
-            logger.warning(
-                f"No rows found in {table_name} matching condition: {condition}"
+    try:
+        with engine.begin() as conn:
+            # First, check if rows matching the condition exist
+            check_query = text(
+                f"SELECT COUNT(*) as cnt FROM {table_name} WHERE {where_clause}"
             )
-            print(f"No rows found matching condition in {table_name}", end="\r")
-            return result_info
+            check_params = {f"cond_{col}": val for col, val in condition.items()}
+            check_result = conn.execute(check_query, check_params)
+            rows_matched = check_result.scalar()
+            result_info["rows_matched"] = rows_matched
 
-        # Execute the update
-        res = conn.execute(query, params)
-        result_info["rows_updated"] = res.rowcount
-        result_info["success"] = res.rowcount > 0
+            if debug or rows_matched == 0:
+                debug_info = {
+                    "query": f"UPDATE {table_name} SET {set_clause} WHERE {where_clause}",
+                    "params": params,
+                    "rows_matching_condition": rows_matched,
+                }
+                result_info["debug_info"] = debug_info
+                logger.info(f"[DEBUG] Query: {debug_info['query']}")
+                logger.info(f"[DEBUG] Params: {debug_info['params']}")
+                logger.info(f"[DEBUG] Rows matching WHERE condition: {rows_matched}")
 
-        if res.rowcount > 0:
-            logger.info(f"✓ Updated {res.rowcount} rows in {table_name}.")
-            print(f" Updated {res.rowcount} rows in {table_name}.", end="\r")
-        else:
-            logger.warning(
-                f"0 rows updated in {table_name} (found {rows_matched} matching rows - values may already match)"
-            )
+            if rows_matched == 0:
+                result_info["error"] = (
+                    f"No rows found in {table_name} matching condition: {condition}"
+                )
+                logger.warning(result_info["error"])
+                print(f"No rows found matching condition in {table_name}", end="\r")
+                return result_info
+
+            # Execute the update
+            res = conn.execute(query, params)
+            result_info["rows_updated"] = res.rowcount
+            result_info["success"] = res.rowcount > 0
+
+            if res.rowcount > 0:
+                logger.info(f"✓ Updated {res.rowcount} rows in {table_name}.")
+                print(f" Updated {res.rowcount} rows in {table_name}.", end="\r")
+            else:
+                result_info["error"] = (
+                    f"0 rows updated in {table_name} "
+                    f"(found {rows_matched} matching rows - values may already match)"
+                )
+                logger.warning(result_info["error"])
+    except SQLAlchemyError as exc:
+        result_info["error"] = str(exc)
+        logger.error(f"Failed to update {table_name} in {db}: {exc}")
 
     return result_info
 
