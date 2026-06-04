@@ -324,6 +324,27 @@ def register_database(
         ) from e
 
 
+def _resolve_mysql_client_bin(client: str) -> str:
+    """Resolve mysql or mysqldump CLI path (PATH, then common install locations)."""
+    bin_path = shutil.which(client)
+    if bin_path:
+        return bin_path
+    home = Path.home()
+    for candidate in (
+        f"/usr/local/bin/{client}",
+        f"/usr/bin/{client}",
+        f"/opt/homebrew/bin/{client}",
+        str(home / "miniconda3" / "bin" / client),
+        str(home / "anaconda3" / "bin" / client),
+    ):
+        if Path(candidate).is_file():
+            return candidate
+    raise FileNotFoundError(
+        f"'{client}' not found on PATH or common locations. "
+        f"Install MySQL client tools or add {client} to PATH."
+    )
+
+
 def clone_database_schema(
     source_db: str,
     target_db: str,
@@ -379,40 +400,8 @@ def clone_database_schema(
         extra_mysqldump_args = extra_mysqldump_args or []
 
         # Resolve mysqldump / mysql binaries — they may not be on the active conda env PATH.
-        mysqldump_bin = shutil.which("mysqldump")
-        mysql_bin = shutil.which("mysql")
-        if not mysqldump_bin:
-            # Common fallback locations (Homebrew, system MySQL, miniconda base).
-            for candidate in [
-                "/usr/local/bin/mysqldump",
-                "/usr/bin/mysqldump",
-                "/opt/homebrew/bin/mysqldump",
-                str(Path.home() / "miniconda3" / "bin" / "mysqldump"),
-                str(Path.home() / "anaconda3" / "bin" / "mysqldump"),
-            ]:
-                if Path(candidate).is_file():
-                    mysqldump_bin = candidate
-                    break
-        if not mysqldump_bin:
-            raise FileNotFoundError(
-                "'mysqldump' not found on PATH or common locations. "
-                "Install MySQL client tools or add mysqldump to PATH."
-            )
-        if not mysql_bin:
-            for candidate in [
-                "/usr/local/bin/mysql",
-                "/usr/bin/mysql",
-                "/opt/homebrew/bin/mysql",
-                str(Path.home() / "miniconda3" / "bin" / "mysql"),
-                str(Path.home() / "anaconda3" / "bin" / "mysql"),
-            ]:
-                if Path(candidate).is_file():
-                    mysql_bin = candidate
-                    break
-        if not mysql_bin:
-            raise FileNotFoundError(
-                "'mysql' not found on PATH or common locations. Install MySQL client tools or add mysql to PATH."
-            )
+        mysqldump_bin = _resolve_mysql_client_bin("mysqldump")
+        mysql_bin = _resolve_mysql_client_bin("mysql")
 
         # 1) Dump (schema-only by default). Use --databases to include CREATE DATABASE + USE.
         dump_cmd = [
@@ -589,11 +578,13 @@ def delete_database(database_name: str) -> None:
     if sql_pw:
         env["MYSQL_PWD"] = str(sql_pw)
 
+    mysql_bin = _resolve_mysql_client_bin("mysql")
+
     # First, check if database exists
     check_db_sql = f"SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '{database_name}';"
     check_result = subprocess.run(
         [
-            "mysql",
+            mysql_bin,
             f"--host={sql_host}",
             f"--port={sql_port}",
             f"--user={sql_user}",
@@ -616,7 +607,7 @@ def delete_database(database_name: str) -> None:
     try:
         subprocess.run(
             [
-                "mysql",
+                mysql_bin,
                 f"--host={sql_host}",
                 f"--port={sql_port}",
                 f"--user={sql_user}",
@@ -639,7 +630,7 @@ def delete_database(database_name: str) -> None:
     # Verify database was actually deleted
     verify_result = subprocess.run(
         [
-            "mysql",
+            mysql_bin,
             f"--host={sql_host}",
             f"--port={sql_port}",
             f"--user={sql_user}",
