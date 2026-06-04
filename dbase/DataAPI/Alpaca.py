@@ -15,6 +15,12 @@ from typing import Any, Optional
 import requests
 
 from dbase.database.db_utils import get_current_environment
+from dbase.DataAPI.alpaca_context import (
+    LIVE_TRADING_BASE_URL,
+    PAPER_TRADING_BASE_URL,
+    AlpacaContext,
+    resolve_context,
+)
 
 # Set up logging - fallback if trade package is not available
 try:
@@ -207,18 +213,34 @@ def _get_order_json_http(order_id: str) -> tuple[int, Optional[dict], str]:
         return r.status_code, None, text
 
 
-def get_alpaca_key():
-    if get_current_environment() == "prod":
-        return os.environ.get("ALPACA_LIVE_KEY")
-    else:
-        return os.environ.get("ALPACA_PAPER_KEY")
+def _require_alpaca_context() -> RuntimeError:
+    """
+    Fail fast when callers use Alpaca APIs without setting AlpacaContext.
+
+    Phase 5 cutover removes legacy env==prod fallbacks; callers must either:
+    - set contextvars once per job via set_alpaca_context(...)
+    - or pass `context=` explicitly to Alpaca entrypoints (scripts/tests)
+    """
+
+    return RuntimeError(
+        "AlpacaContext is not set. Call dbase.DataAPI.alpaca_context.set_alpaca_context(...) "
+        "for the current task (or pass `context=` / AlpacaContext.from_env(...) "
+        "for one-off calls) before using Alpaca credentials."
+    )
 
 
-def get_alpaca_secret():
-    if get_current_environment() == "prod":
-        return os.environ.get("ALPACA_LIVE_SECRET")
-    else:
-        return os.environ.get("ALPACA_PAPER_SECRET")
+def get_alpaca_key(context: AlpacaContext | None = None) -> str:
+    ctx = resolve_context(context)
+    if ctx is None:
+        raise _require_alpaca_context()
+    return ctx.api_key
+
+
+def get_alpaca_secret(context: AlpacaContext | None = None) -> str:
+    ctx = resolve_context(context)
+    if ctx is None:
+        raise _require_alpaca_context()
+    return ctx.api_secret
 
 
 def generate_option_symbol(
@@ -313,29 +335,43 @@ def collect_params(args_dict, exclude: list[str] = []):
     return params
 
 
-def get_headers():
+def get_headers(context: AlpacaContext | None = None) -> dict[str, str]:
     return {
         "accept": "application/json",
-        "APCA-API-KEY-ID": get_alpaca_key(),
-        "APCA-API-SECRET-KEY": get_alpaca_secret(),
+        "APCA-API-KEY-ID": get_alpaca_key(context),
+        "APCA-API-SECRET-KEY": get_alpaca_secret(context),
     }
 
 
-def get_trading_client(paper: bool = True, raw_data: bool = False) -> TradingClient:
+def get_trading_client(
+    paper: bool | None = None,
+    raw_data: bool = False,
+    context: AlpacaContext | None = None,
+) -> TradingClient:
+    ctx = resolve_context(context)
+    if ctx is not None:
+        return TradingClient(
+            ctx.api_key,
+            ctx.api_secret,
+            paper=ctx.paper if paper is None else paper,
+            raw_data=raw_data,
+        )
     return TradingClient(
         get_alpaca_key(),
         get_alpaca_secret(),
-        paper=paper,
+        paper=True if paper is None else paper,
         raw_data=raw_data,
     )
 
 
-def get_base_url(paper: bool = True):
-    return (
-        "https://paper-api.alpaca.markets/v2"
-        if paper
-        else "https://api.alpaca.markets/v2"
-    )
+def get_base_url(paper: bool | None = None, context: AlpacaContext | None = None) -> str:
+    ctx = resolve_context(context)
+    if ctx is not None:
+        if paper is None or paper == ctx.paper:
+            return ctx.trading_base_url
+        return PAPER_TRADING_BASE_URL if paper else LIVE_TRADING_BASE_URL
+    use_paper = True if paper is None else paper
+    return PAPER_TRADING_BASE_URL if use_paper else LIVE_TRADING_BASE_URL
 
 
 def add_query_param(url: str, param: str, value: str) -> str:

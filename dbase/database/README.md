@@ -526,14 +526,63 @@ CREATE TABLE bot_clients (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE bot_identity (
-  id             INT NOT NULL AUTO_INCREMENT,
-  bot_name       VARCHAR(32) NOT NULL,
-  token_env_key  VARCHAR(64) NOT NULL,
-  notes          VARCHAR(255) NULL,
-  updated_at     TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (id)
+  id                INT NOT NULL AUTO_INCREMENT,
+  bot_name          VARCHAR(32) NOT NULL,
+  credential_source VARCHAR(32) NOT NULL,
+  env_var_name      VARCHAR(64) NOT NULL,
+  enabled           TINYINT(1) NOT NULL DEFAULT 1,
+  notes             VARCHAR(255) NULL,
+  updated_at        TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_bot_identity_credential_source (credential_source)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
+
+**`bot_identity` credential sources (v1):** one row per source, same `bot_name` on all rows. `env_var_name` holds the `.env` variable name for secrets/tokens, or the trading mode literal (`paper` / `live`) for `alpaca_trading_mode` (not an env var).
+
+| `credential_source` | `env_var_name` example |
+|---------------------|------------------------|
+| `discord_token` | `EMEFIELE_TOKEN` |
+| `alpaca_key` | `EMEFIELE_ALPACA_KEY` |
+| `alpaca_secret` | `EMEFIELE_ALPACA_SECRET` |
+| `alpaca_trading_mode` | `paper` or `live` (stored value) |
+
+#### `bot_identity` migration (single-row → multi-credential)
+
+Apply only on envs still on legacy `token_env_key` (pilot: `portfolio_config_long_bbands_v2`). No versioned migration files — run manually, then clone/sync propagates shape via `CREATE TABLE … LIKE`.
+
+```sql
+-- 1) Add columns
+ALTER TABLE portfolio_config_<env>.bot_identity
+  ADD COLUMN credential_source VARCHAR(32) NULL AFTER bot_name,
+  ADD COLUMN env_var_name VARCHAR(64) NULL AFTER credential_source,
+  ADD COLUMN enabled TINYINT(1) NOT NULL DEFAULT 1 AFTER env_var_name;
+
+-- 2) Backfill discord row from legacy column
+UPDATE portfolio_config_<env>.bot_identity
+SET credential_source = 'discord_token',
+    env_var_name = token_env_key
+WHERE credential_source IS NULL;
+
+-- 3) Drop legacy column before inserting Alpaca rows (token_env_key is NOT NULL)
+ALTER TABLE portfolio_config_<env>.bot_identity DROP COLUMN token_env_key;
+
+-- 4) Insert Alpaca credential rows (adjust bot_name / env_var_name for persona)
+INSERT INTO portfolio_config_<env>.bot_identity
+  (bot_name, credential_source, env_var_name, enabled, notes)
+VALUES
+  ('emefiele', 'alpaca_key', 'EMEFIELE_ALPACA_KEY', 1, NULL),
+  ('emefiele', 'alpaca_secret', 'EMEFIELE_ALPACA_SECRET', 1, NULL),
+  ('emefiele', 'alpaca_trading_mode', 'paper', 1, NULL);
+
+-- 5) Enforce NOT NULL + unique credential_source
+ALTER TABLE portfolio_config_<env>.bot_identity
+  MODIFY COLUMN credential_source VARCHAR(32) NOT NULL,
+  MODIFY COLUMN env_var_name VARCHAR(64) NOT NULL,
+  ADD UNIQUE KEY uq_bot_identity_credential_source (credential_source);
+```
+
+Verify (read-only): expect **4** enabled rows, one `bot_name`, four distinct `credential_source` values. TFP-Algo `verify_bot_config` now validates this 4-row contract directly.
 
 ### `create` and bot rows
 
@@ -578,6 +627,50 @@ make verify-bot-config-verbose ENV=<env>
 
 Exit `0` = no errors (warnings allowed for optional channel types).
 
+### Alpaca persona cutover live test (2026-06-02)
+
+Phase 5 cutover behavior:
+
+- Legacy Alpaca key/secret fallback is removed.
+- `dbase.DataAPI.Alpaca` now requires an active `AlpacaContext` for credential and host resolution.
+
+Run from `TFP-Algo` repo root:
+
+```bash
+# 1) Identity/env contract verification
+make verify-bot-config ENV=long_bbands_v2
+
+# 2) Runtime path smoke (includes trading flow)
+make dry-run ENV=long_bbands_v2
+
+# 3) One-call host+credentials consistency check
+python - <<'PY'
+from dotenv import load_dotenv
+from dbase.database.db_utils import set_environment_context
+from algo.bot.credentials import build_alpaca_context_for_current_env
+from dbase.DataAPI.alpaca_context import set_alpaca_context, reset_alpaca_context
+from dbase.DataAPI.Alpaca import get_base_url, get_headers, get_orders
+
+load_dotenv()
+set_environment_context(environment="long_bbands_v2", branch_name="live-test")
+ctx = build_alpaca_context_for_current_env()
+token = set_alpaca_context(ctx)
+try:
+    print("base_url=", get_base_url())
+    print("key_prefix=", get_headers()["APCA-API-KEY-ID"][:6])
+    get_orders(status="all", limit=1)
+    print("orders_check=ok")
+finally:
+    reset_alpaca_context(token)
+PY
+```
+
+Pass criteria:
+
+- `make verify-bot-config` exits `0` with one bot persona and 4 required credential sources.
+- `make dry-run` does not raise `AlpacaContext is not set`.
+- Spot-check returns `orders_check=ok` and a base URL consistent with trading mode (`paper-api.alpaca.markets` for paper, `api.alpaca.markets` for live).
+
 **MCP / SQL** (replace DB name for target env):
 
 ```sql
@@ -586,8 +679,10 @@ SELECT channel_type, channel_name, channel_id, enabled
 FROM portfolio_config_<env>.discord_channels
 ORDER BY channel_type;
 
--- Exactly one identity row
-SELECT id, bot_name, token_env_key FROM portfolio_config_<env>.bot_identity;
+-- Identity credentials (expect 4 rows on migrated envs)
+SELECT id, bot_name, credential_source, env_var_name, enabled
+FROM portfolio_config_<env>.bot_identity
+ORDER BY credential_source;
 
 -- Enabled clients
 SELECT discord_username, enabled
@@ -595,11 +690,11 @@ FROM portfolio_config_<env>.bot_clients
 WHERE enabled = 1;
 ```
 
-Pilot canonical example: `portfolio_config_long_bbands_v2` — expect 4 enabled channels, 1 identity (`emefiele` / `EMEFIELE_TOKEN`), 2 clients.
+Pilot canonical example: `portfolio_config_long_bbands_v2` — expect 4 enabled channels, 4 identity rows (`emefiele` × discord + Alpaca sources), 2 clients.
 
 ### Rollback (runtime)
 
-Set **`BOT_CONFIG_SOURCE=yaml`** on the bot process and restart. Default runtime path is DB-only (Phase 4). Tokens stay in `.env`; only `token_env_key` names are stored in `bot_identity`.
+Set **`BOT_CONFIG_SOURCE=yaml`** on the bot process and restart. Default runtime path is DB-only (Phase 4). Secrets stay in `.env`; `bot_identity.env_var_name` stores env var names (or `paper`/`live` for `alpaca_trading_mode`).
 
 ### TFP-Algo audit bundle
 

@@ -27,12 +27,15 @@ dbase/
 ---
 
 ## 4. Configuration
-- **API keys:**
-  - Paper: `ALPACA_PAPER_KEY`, `ALPACA_PAPER_SECRET`
-  - Live: `ALPACA_LIVE_KEY`, `ALPACA_LIVE_SECRET`
+- **Runtime context is required (Phase 5 cutover):**
+  - `Alpaca.py` reads credentials + host from active `AlpacaContext`.
+  - No legacy fallback to `ALPACA_PAPER_*` / `ALPACA_LIVE_*` in module credential paths.
+- **Credential source of truth:**
+  - TFP-Algo resolves persona rows from `bot_identity` (`discord_token`, `alpaca_key`, `alpaca_secret`, `alpaca_trading_mode`) and builds `AlpacaContext`.
+  - Script-only callers can build context with `AlpacaContext.from_env(<KEY_VAR>, <SECRET_VAR>, paper=<bool>)`.
 - **Selection:**
-  - `paper` flag in functions/classes determines which keys to use.
-  - Fail fast if required keys are missing.
+  - Trading host is derived from `AlpacaContext.paper` (or explicit `base_url` override in context).
+  - Fail fast if context is unset or key/secret are missing.
 - **Logging level:**
   - Set via `STREAM_LOG_LEVEL` environment variable.
 
@@ -115,10 +118,16 @@ dbase/
 ## 15. Example Usage
 ```python
 from dbase.DataAPI.Alpaca import get_account, place_order, get_option_chain
+from dbase.DataAPI.alpaca_context import AlpacaContext, set_alpaca_context, reset_alpaca_context
 
-account = get_account(paper=True)
-order = place_order(symbol="AAPL", qty=1, side="buy", type="market", paper=True)
-chain = get_option_chain('AAPL', paper=True)
+ctx = AlpacaContext.from_env("EMEFIELE_ALPACA_KEY", "EMEFIELE_ALPACA_SECRET", paper=True)
+token = set_alpaca_context(ctx)
+try:
+    account = get_account()
+    order = place_order(symbol="AAPL", qty=1, side="buy", type="market")
+    chain = get_option_chain("AAPL")
+finally:
+    reset_alpaca_context(token)
 ```
 
 ---
