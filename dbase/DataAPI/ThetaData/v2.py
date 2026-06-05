@@ -2125,7 +2125,6 @@ def retrieve_chain_bulk(
     end_time = str(convert_time_to_miliseconds(end_time))
     
     if is_today:
-        print("Using snapshot endpoint for bulk chain retrieval since end_date is today")
         url = "http://127.0.0.1:25510/v2/bulk_snapshot/option/quote"
     else:
         url = f"http://127.0.0.1:25510/v2/bulk_at_time/option/{'quote' if not oi else 'open_interest'}"
