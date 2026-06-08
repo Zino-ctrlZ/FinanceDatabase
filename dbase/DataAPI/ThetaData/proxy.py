@@ -279,9 +279,8 @@ def get_should_schedule():
 
 
 def schedule_kwargs(kwargs):
-    from module_test.raw_code.DataManagers.SaveManager import SaveManager
-
-    SaveManager.schedule(kwargs=kwargs)
+    logger.warning("Schedule kwargs is not implemented. Returning None. Please stop using this function.")
+    return None
 
 
 def get_proxy_url_from_env():
