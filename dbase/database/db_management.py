@@ -5,6 +5,7 @@ This module provides functions to clone database schemas from production
 to test environments using mysqldump and mysql restore.
 """
 
+import argparse
 import json
 import os
 import re
@@ -1182,10 +1183,8 @@ def create_test_environment(
     return created
 
 
-def build_cli_parser() -> "argparse.ArgumentParser":
+def build_cli_parser() -> argparse.ArgumentParser:
     """Build CLI argument parser (used by __main__ and tests)."""
-    import argparse
-
     parser = argparse.ArgumentParser(description="Manage test database environments: create or delete.")
 
     # Create subcommands
