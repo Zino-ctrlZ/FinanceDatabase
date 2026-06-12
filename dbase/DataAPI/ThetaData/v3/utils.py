@@ -282,7 +282,7 @@ logger = setup_logger("dbase.DataAPI.ThetaData.v3.utils")
 ##NOTE: Interested in seeing additional overhead
 # @timeit
 def _new_dataframe_formatting(
-    df: pd.DataFrame, interval: str, is_bulk: bool = False, ignore_drop_conditional: bool = False
+    df: pd.DataFrame, interval: str, is_bulk: bool = False, ignore_drop_conditional: bool = False, force_resampling: bool = False
 ) -> pd.DataFrame:
     """
     Formats the DataFrame to a new standard structure.
@@ -368,7 +368,7 @@ def _new_dataframe_formatting(
 
     ## Resample
     ## Only resample on None bulk and intraday
-    if not is_bulk and is_intraday:
+    if (not is_bulk and is_intraday) or force_resampling:
         df = resample(df, interval=interval)
 
     ## Set timestamp as index

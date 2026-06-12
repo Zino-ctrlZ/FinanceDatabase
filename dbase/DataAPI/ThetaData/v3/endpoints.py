@@ -1183,7 +1183,7 @@ def _raw_retrieve_quote(
         **kwargs,
     )
 
-    data = _new_dataframe_formatting(data, interval=interval or "30m")
+    data = _new_dataframe_formatting(data, interval=interval or "30m", force_resampling=True)
     data = bootstrap_ohlc(data)
 
     if SETTINGS.use_old_formatting:
@@ -1281,7 +1281,7 @@ def _raw_retrieve_ohlc(
         interval=interval,
         print_url=print_url,
         **kwargs,
-    )
+    ) 
     data = _new_dataframe_formatting(df=data, interval=interval or "30m", is_bulk=False)
     return data
 
