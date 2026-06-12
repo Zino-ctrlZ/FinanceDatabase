@@ -278,7 +278,7 @@ def get_should_schedule():
     return _SHOULD_SCHEDULE
 
 
-def schedule_kwargs(kwargs):
+def schedule_kwargs(**kwargs):
     logger.warning("Schedule kwargs is not implemented. Returning None. Please stop using this function.")
     return None
 

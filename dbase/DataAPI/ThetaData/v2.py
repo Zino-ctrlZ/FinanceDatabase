@@ -221,7 +221,7 @@ from ..ThetaExceptions import (
     ThetaDataParseError,
     raise_thetadata_exception,
 )
-from .proxy import get_proxy_url, schedule_kwargs, get_should_schedule
+from .proxy import get_proxy_url
 import backoff
 
 reload_pricing_config()
@@ -806,7 +806,6 @@ def retrieve_eod_ohlc(
         type_="single",
         save_func="save_to_database",
     )
-    schedule_kwargs(sm_kwargs) if get_should_schedule() else None
 
     ## Start processing
     pass_kwargs = {
