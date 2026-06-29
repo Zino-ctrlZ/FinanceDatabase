@@ -24,6 +24,14 @@ from .SQLHelpers import (
     create_SQL_database,
 )
 
+# Import from connection_cleanup - MySQL session audit/cleanup
+from .connection_cleanup import (
+    audit_mysql_connections,
+    cleanup_mysql_connections,
+    dispose_local_mysql_connections,
+    MysqlConnectionAudit,
+)
+
 # Import from Database - environment-aware name resolution
 from .db_utils import (
     Database,  # Database name constants
@@ -75,6 +83,10 @@ __all__ = [
     "set_environment_context",
     "get_current_environment",
     "get_current_branch_name",
+    "audit_mysql_connections",
+    "cleanup_mysql_connections",
+    "dispose_local_mysql_connections",
+    "MysqlConnectionAudit",
     # Database Management exports
     "create_database_for_environment",
     "create_test_environment",
