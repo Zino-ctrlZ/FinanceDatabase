@@ -373,6 +373,8 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
             "closeask": "last",
             "midpoint": "last",
             "weighted_midpoint": "last",
+            "bid": "last",
+            "ask": "last",
         }
 
     assert string in TIMEFRAME_MAP.keys(), f"Available Timeframe Alias are {TIMEFRAME_MAP.keys()}, recieved '{string}'"
