@@ -1,4 +1,4 @@
 ThetaData:
-    ☐ Revamp ThetaData Ensuring that functions are properly documented, reducing redundant code and ensuring streamlined operations
+    ✔ Revamp ThetaData Ensuring that functions are properly documented, reducing redundant code and ensuring streamlined operations @done(26-07-10 09:54)
     ☐ Add opttick to ThetaData for better option handling
     ☐ Add a get price method to return price of an option on a date
