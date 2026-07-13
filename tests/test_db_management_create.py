@@ -106,6 +106,26 @@ def test_create_parser_accepts_source_env():
     assert args.command == "create"
     assert args.env == "scratch"
     assert args.source_env == "long_bbands_v2"
+    assert args.seed_strategy_envs is False
+
+
+def test_create_parser_seed_strategy_envs_flag():
+    parser = build_cli_parser()
+    args = parser.parse_args(
+        [
+            "create",
+            "--env",
+            "scratch",
+            "--branch",
+            "feature-x",
+            "--source-env",
+            "long_bbands_v2",
+            "--with-data",
+            "--seed-strategy-envs",
+        ]
+    )
+    assert args.seed_strategy_envs is True
+    assert args.force_strategy_envs is False
 
 
 def test_create_test_environment_requires_source_environment():

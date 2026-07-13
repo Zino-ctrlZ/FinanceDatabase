@@ -1127,6 +1127,8 @@ def create_test_environment(
     source_environment: str,
     exclude_databases: Optional[list[str]] = None,
     schema_only: bool = True,
+    seed_strategy_envs: bool = False,
+    force_strategy_envs: bool = False,
 ) -> dict[str, str]:
     """
     Create an environment by cloning schemas (and optionally data) from a source environment.
@@ -1137,6 +1139,10 @@ def create_test_environment(
         source_environment: Source environment to clone from (required; e.g. long_bbands_v2)
         exclude_databases: Additional databases to exclude
         schema_only: If True, clone schema only; if False, clone schema + data
+        seed_strategy_envs: If True, also copy ``prod_strategies/<slug>/envs/<source>/``
+            to ``envs/<environment>/`` via ``create_strategy_env`` (requires CONFIGS_DIR).
+            Opt-in; ``make create-env-with-data`` passes this.
+        force_strategy_envs: Overwrite existing strategy env folders when seeding.
 
     Returns:
         dict: Created database names {base_name: full_name}
@@ -1180,6 +1186,38 @@ def create_test_environment(
 
         created[base_name] = target_db_name
 
+    ## Seed on-disk strategy env folders after DB clone (CONFIGS_DIR / prod_strategies)
+    if seed_strategy_envs:
+        from .create_strategy_env import create_strategy_env
+
+        try:
+            seeded = create_strategy_env(
+                source_env=source_environment,
+                target_env=environment,
+                force=force_strategy_envs,
+            )
+            db_management_logger.info(
+                "Seeded strategy env folders for %s from %s: %s",
+                environment,
+                source_environment,
+                [str(p) for p in seeded],
+            )
+        except FileNotFoundError as exc:
+            ## DB create succeeded; missing CONFIGS_DIR / source envs is operator follow-up
+            db_management_logger.warning(
+                "Skipped strategy env folder seed for %s from %s: %s",
+                environment,
+                source_environment,
+                exc,
+            )
+        except FileExistsError as exc:
+            db_management_logger.warning(
+                "Strategy env folders already exist for %s (pass force_strategy_envs=True / "
+                "--force-strategy-envs to overwrite): %s",
+                environment,
+                exc,
+            )
+
     return created
 
 
@@ -1216,6 +1254,19 @@ def build_cli_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Additional database base names to exclude (repeatable).",
+    )
+    create_parser.add_argument(
+        "--seed-strategy-envs",
+        action="store_true",
+        help=(
+            "Also copy prod_strategies/<slug>/envs/<source> to envs/<env> "
+            "(requires CONFIGS_DIR). Used by make create-env-with-data."
+        ),
+    )
+    create_parser.add_argument(
+        "--force-strategy-envs",
+        action="store_true",
+        help="Overwrite existing strategy env folders when seeding.",
     )
 
     # Delete environment command
@@ -1314,6 +1365,8 @@ def __main__():
             source_environment=args.source_env,
             exclude_databases=args.exclude or None,
             schema_only=schema_only,
+            seed_strategy_envs=args.seed_strategy_envs,
+            force_strategy_envs=args.force_strategy_envs,
         )
 
         # Print in a deterministic / machine-readable way

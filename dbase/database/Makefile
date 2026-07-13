@@ -7,6 +7,7 @@ BRANCH ?= none
 CONFIRM ?=
 WITH_DATA ?=
 EXCLUDE ?=
+FORCE_STRATEGY_ENVS ?=
 ARGS ?=
 
 DATABASE_MK_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
@@ -25,6 +26,7 @@ endif
 
 CONFIRM_FLAG := $(if $(filter 1 yes true,$(CONFIRM)),--confirm,)
 WITH_DATA_FLAG := $(if $(filter 1 yes true,$(WITH_DATA)),--with-data,)
+FORCE_STRATEGY_ENVS_FLAG := $(if $(filter 1 yes true,$(FORCE_STRATEGY_ENVS)),--force-strategy-envs,)
 SYNC_BRANCH_FLAG := $(if $(filter none,$(BRANCH)),,--branch $(BRANCH))
 CREATE_DB_BRANCH_FLAG := $(if $(filter none,$(BRANCH)),,--branch $(BRANCH))
 
@@ -36,10 +38,11 @@ help: ## Show available targets
 	@echo ""
 	@echo "Variables (defaults): ENV=$(ENV) NAME=$(NAME) SOURCE_ENV=$(SOURCE_ENV) TARGET_ENV=$(TARGET_ENV) BRANCH=$(BRANCH)"
 	@echo "  CONFIRM=1 skip delete prompt; WITH_DATA=1 copy data on sync-apply (create-env-with-data always copies data)"
-	@echo "  EXCLUDE='base1 base2' extra --exclude on create-env; ARGS extra CLI flags"
+	@echo "  EXCLUDE='base1 base2' extra --exclude on create-env; FORCE_STRATEGY_ENVS=1 overwrite strategy env folders"
+	@echo "  ARGS extra CLI flags"
 
 test: ## Run db_management unit tests (from repo root)
-	cd $(REPO_ROOT) && $(PYTHON) -m pytest tests/test_db_management_create.py tests/test_db_management_create_db.py $(ARGS)
+	cd $(REPO_ROOT) && $(PYTHON) -m pytest tests/test_db_management_create.py tests/test_db_management_create_db.py tests/test_create_strategy_env.py $(ARGS)
 
 test-db-management: test ## Alias for test (repo root convenience)
 
@@ -57,11 +60,11 @@ create-env: ## Create env schema-only (ENV, BRANCH, SOURCE_ENV required; EXCLUDE
 	@if [ "$(SOURCE_ENV)" = "none" ]; then echo "SOURCE_ENV is required"; exit 1; fi
 	$(DB_MGMT) create --env $(ENV) --branch $(BRANCH) --source-env $(SOURCE_ENV) --schema-only $(CREATE_EXCLUDE) $(ARGS)
 
-create-env-with-data: ## Create env with data (ENV, BRANCH, SOURCE_ENV required; EXCLUDE optional)
+create-env-with-data: ## Create env with data + seed strategy envs/<ENV> from SOURCE_ENV
 	@if [ "$(ENV)" = "none" ]; then echo "ENV is required"; exit 1; fi
 	@if [ "$(BRANCH)" = "none" ]; then echo "BRANCH is required"; exit 1; fi
 	@if [ "$(SOURCE_ENV)" = "none" ]; then echo "SOURCE_ENV is required"; exit 1; fi
-	$(DB_MGMT) create --env $(ENV) --branch $(BRANCH) --source-env $(SOURCE_ENV) --with-data $(CREATE_EXCLUDE) $(ARGS)
+	$(DB_MGMT) create --env $(ENV) --branch $(BRANCH) --source-env $(SOURCE_ENV) --with-data --seed-strategy-envs $(FORCE_STRATEGY_ENVS_FLAG) $(CREATE_EXCLUDE) $(ARGS)
 
 delete: ## Delete environment ENV (CONFIRM=1 to skip prompt)
 	@if [ "$(ENV)" = "none" ]; then echo "ENV is required (e.g. make delete ENV=test-mean-reversion)"; exit 1; fi
