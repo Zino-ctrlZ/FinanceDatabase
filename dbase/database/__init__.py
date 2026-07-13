@@ -41,6 +41,8 @@ from .db_utils import (
     set_environment_context,  # Environment context management
     get_current_environment,
     get_current_branch_name,
+    register_on_environment_changed,
+    unregister_on_environment_changed,
 )
 
 # Import from db_management - schema cloning, deletion, and env diff/sync
@@ -56,6 +58,7 @@ from .db_management import (
     sync_environment_from_source,
     EnvironmentDiff,
 )
+from .create_strategy_env import create_strategy_env
 
 __all__ = [
     # SQLHelpers exports
@@ -83,6 +86,8 @@ __all__ = [
     "set_environment_context",
     "get_current_environment",
     "get_current_branch_name",
+    "register_on_environment_changed",
+    "unregister_on_environment_changed",
     "audit_mysql_connections",
     "cleanup_mysql_connections",
     "dispose_local_mysql_connections",
@@ -98,4 +103,5 @@ __all__ = [
     "sync_missing_tables_from_environment",
     "sync_environment_from_source",
     "EnvironmentDiff",
+    "create_strategy_env",
 ]
