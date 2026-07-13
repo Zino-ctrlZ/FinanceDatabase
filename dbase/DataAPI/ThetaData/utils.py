@@ -365,6 +365,8 @@ def resample(data, interval, custom_agg_columns=None, method="ffill", **kwargs):
             "low": "min",
             "close": "last",
             "volume": "sum",
+            "bid": "last",
+            "ask": "last",
             "bid_size": "last",
             "closebid": "last",
             "close_bid": "last",
