@@ -23,7 +23,7 @@ from dbase.utils import enforce_bus_hours, add_eod_timestamp
 from ..ThetaExceptions import raise_thetadata_exception
 from .patches import ThetaDataPatchProcessor
 
-logger = setup_logger("dbase.DataAPI.ThetaData.switcher", stream_log_level="INFO")
+logger = setup_logger("dbase.DataAPI.ThetaData.switcher", stream_log_level="WARNING")
 
 
 def _use_v2() -> bool:
