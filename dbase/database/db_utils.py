@@ -3,9 +3,17 @@ Database name constants and environment-aware resolution.
 
 This module provides database name constants and functions for resolving
 environment-aware database names based on git branch and CLI arguments.
+
+Listeners may register via ``register_on_environment_changed`` to react when
+``set_environment_context`` changes the environment string (e.g. TFP-Algo
+clearing process caches). FinanceDatabase only invokes callbacks; it does not
+own consumer cache state.
 """
 
+from __future__ import annotations
+
 import os
+from typing import Callable, List, Optional
 
 
 class Database:
@@ -36,6 +44,39 @@ _DB_NAME_CACHE = {}  # {(environment, base_name): full_name}
 # Module-level environment context (set by TFP-Algo)
 ENVIRONMENT_CONTEXT = {"environment": "test", "branch_name": None}
 
+## Listeners for env string changes (TFP registers cache clears here)
+EnvChangeCallback = Callable[[Optional[str], Optional[str]], None]
+_ENV_CHANGE_CALLBACKS: List[EnvChangeCallback] = []
+
+
+def register_on_environment_changed(callback: EnvChangeCallback) -> None:
+    """Register a listener invoked when ``set_environment_context`` changes env.
+
+    Args:
+        callback: Function ``(old_env, new_env) -> None``. Not called when
+            ``old_env == new_env``.
+
+    Returns:
+        None
+    """
+    if callback not in _ENV_CHANGE_CALLBACKS:
+        _ENV_CHANGE_CALLBACKS.append(callback)
+
+
+def unregister_on_environment_changed(callback: EnvChangeCallback) -> None:
+    """Remove a previously registered environment-change listener.
+
+    Args:
+        callback: Callback previously passed to ``register_on_environment_changed``.
+
+    Returns:
+        None
+    """
+    try:
+        _ENV_CHANGE_CALLBACKS.remove(callback)
+    except ValueError:
+        pass
+
 
 def set_environment_context(environment: str = None, branch_name: str = None):
     """
@@ -51,15 +92,21 @@ def set_environment_context(environment: str = None, branch_name: str = None):
 
     Note:
         When the environment context changes, the database name cache is cleared
-        to ensure fresh resolution for the new environment.
+        and any ``register_on_environment_changed`` listeners are notified.
     """
     global ENVIRONMENT_CONTEXT
+    old_env = ENVIRONMENT_CONTEXT.get("environment")
     # Update the existing dictionary instead of creating a new one
     ENVIRONMENT_CONTEXT["environment"] = environment
     ENVIRONMENT_CONTEXT["branch_name"] = branch_name
     # Clear cache when context changes
 
     clear_database_name_cache()
+
+    ## Notify consumers (e.g. TFP process caches) only on real env string change
+    if old_env != environment:
+        for callback in list(_ENV_CHANGE_CALLBACKS):
+            callback(old_env, environment)
 
 
 def get_current_environment():
