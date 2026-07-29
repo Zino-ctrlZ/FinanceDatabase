@@ -54,6 +54,7 @@ from .db_management import (
     create_missing_databases_from_environment,
     sync_missing_tables_from_environment,
     sync_environment_from_source,
+    sync_all_environments_from_source,
     EnvironmentDiff,
 )
 
@@ -97,5 +98,6 @@ __all__ = [
     "create_missing_databases_from_environment",
     "sync_missing_tables_from_environment",
     "sync_environment_from_source",
+    "sync_all_environments_from_source",
     "EnvironmentDiff",
 ]

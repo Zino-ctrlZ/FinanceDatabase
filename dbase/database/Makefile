@@ -29,17 +29,17 @@ SYNC_BRANCH_FLAG := $(if $(filter none,$(BRANCH)),,--branch $(BRANCH))
 CREATE_DB_BRANCH_FLAG := $(if $(filter none,$(BRANCH)),,--branch $(BRANCH))
 
 .DEFAULT_GOAL := help
-.PHONY: help test test-db-management list create-env create-db create-env-with-data delete diff sync sync-apply
+.PHONY: help test test-db-management list create-env create-db create-env-with-data delete diff sync sync-apply sync-all sync-all-apply
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_.-]+:.*##' $(DATABASE_MK_DIR)/Makefile | awk -F':.*## ' '{printf "  make %-22s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Variables (defaults): ENV=$(ENV) NAME=$(NAME) SOURCE_ENV=$(SOURCE_ENV) TARGET_ENV=$(TARGET_ENV) BRANCH=$(BRANCH)"
-	@echo "  CONFIRM=1 skip delete prompt; WITH_DATA=1 copy data on sync-apply (create-env-with-data always copies data)"
+	@echo "  CONFIRM=1 skip delete prompt; WITH_DATA=1 copy data on sync-apply / sync-all-apply (create-env-with-data always copies data)"
 	@echo "  EXCLUDE='base1 base2' extra --exclude on create-env; ARGS extra CLI flags"
 
 test: ## Run db_management unit tests (from repo root)
-	cd $(REPO_ROOT) && $(PYTHON) -m pytest tests/test_db_management_create.py tests/test_db_management_create_db.py $(ARGS)
+	cd $(REPO_ROOT) && $(PYTHON) -m pytest tests/test_db_management_create.py tests/test_db_management_create_db.py tests/test_db_management_sync_all.py $(ARGS)
 
 test-db-management: test ## Alias for test (repo root convenience)
 
@@ -81,3 +81,11 @@ sync-apply: ## Sync and apply (WITH_DATA=1 for --with-data; BRANCH optional for 
 	@if [ "$(SOURCE_ENV)" = "none" ]; then echo "SOURCE_ENV is required"; exit 1; fi
 	@if [ "$(TARGET_ENV)" = "none" ]; then echo "TARGET_ENV is required"; exit 1; fi
 	$(DB_MGMT) sync --source-env $(SOURCE_ENV) --target-env $(TARGET_ENV) --apply $(WITH_DATA_FLAG) $(SYNC_BRANCH_FLAG) $(ARGS)
+
+sync-all: ## Fan-out sync dry run to all non-protected envs (SOURCE_ENV required)
+	@if [ "$(SOURCE_ENV)" = "none" ]; then echo "SOURCE_ENV is required"; exit 1; fi
+	$(DB_MGMT) sync-all --source-env $(SOURCE_ENV) $(SYNC_BRANCH_FLAG) $(ARGS)
+
+sync-all-apply: ## Fan-out sync apply to all non-protected envs (WITH_DATA=1 optional)
+	@if [ "$(SOURCE_ENV)" = "none" ]; then echo "SOURCE_ENV is required"; exit 1; fi
+	$(DB_MGMT) sync-all --source-env $(SOURCE_ENV) --apply $(WITH_DATA_FLAG) $(SYNC_BRANCH_FLAG) $(ARGS)

@@ -980,6 +980,71 @@ def sync_environment_from_source(
     return result
 
 
+def sync_all_environments_from_source(
+    source_environment: str,
+    branch_name: Optional[str] = None,
+    schema_only: bool = True,
+    copy_table_data: bool = False,
+    sync_databases: bool = True,
+    sync_tables: bool = True,
+    apply: bool = False,
+    exclude_protected: bool = True,
+) -> dict[str, Any]:
+    """
+    Fan-out pairwise sync from one source into every other listed environment.
+
+    Targets come from ``list_environments(exclude_prod=exclude_protected)`` with
+    ``source_environment`` removed. Each target is synced via
+    ``sync_environment_from_source`` (same dry-run / apply / with-data semantics).
+
+    Args:
+        source_environment: Source env (e.g. ``prod`` or ``long_bbands_v2``).
+        branch_name: Optional branch for new DB registration in targets.
+        schema_only: For new DBs, clone schema only (default True).
+        copy_table_data: For new tables, copy data (default False).
+        sync_databases: If True, create missing databases when apply=True.
+        sync_tables: If True, add missing tables when apply=True.
+        apply: If False (default), dry run; if True, perform sync per target.
+        exclude_protected: If True (default), skip envs in ``DB_PROTECTED_ENVIRONMENTS``.
+
+    Returns:
+        dict with keys: source_environment, targets, results (target -> pairwise
+        sync result), dry_run.
+    """
+    validate_database_input(source_environment)
+    if branch_name:
+        validate_database_input(branch_name)
+
+    ## Targets = registry envs minus protected (optional) minus the source itself.
+    ## Source may be protected (e.g. prod); we still sync *from* it, never *to* it
+    ## when exclude_protected=True.
+    targets = [
+        env
+        for env in list_environments(exclude_prod=exclude_protected)
+        if env != source_environment
+    ]
+
+    results: dict[str, Any] = {}
+    for target in targets:
+        results[target] = sync_environment_from_source(
+            source_environment=source_environment,
+            target_environment=target,
+            branch_name=branch_name,
+            schema_only=schema_only,
+            copy_table_data=copy_table_data,
+            sync_databases=sync_databases,
+            sync_tables=sync_tables,
+            apply=apply,
+        )
+
+    return {
+        "source_environment": source_environment,
+        "targets": targets,
+        "results": results,
+        "dry_run": not apply,
+    }
+
+
 def bot_config_table_row_counts(portfolio_config_db: str) -> dict[str, int]:
     """
     Return row counts for bot config tables in a physical portfolio_config database.
@@ -1271,6 +1336,32 @@ def build_cli_parser() -> argparse.ArgumentParser:
         help="Apply changes. Default is dry run.",
     )
 
+    # Sync-all: fan-out pairwise sync to every non-protected env except source
+    sync_all_parser = subparsers.add_parser(
+        "sync-all",
+        help=(
+            "Sync missing DBs/tables from source into every non-protected environment. "
+            "Dry run unless --apply."
+        ),
+    )
+    sync_all_parser.add_argument("--source-env", required=True, help="Source environment.")
+    sync_all_parser.add_argument(
+        "--branch",
+        required=False,
+        default=None,
+        help="Optional branch name for new DB registration (stored in master_config).",
+    )
+    sync_all_parser.add_argument(
+        "--with-data",
+        action="store_true",
+        help="Copy data for new tables and new DBs (default: schema only).",
+    )
+    sync_all_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply changes. Default is dry run.",
+    )
+
     create_db_parser = subparsers.add_parser(
         "create-db",
         help="Create an empty database and register it in master_config (no schema clone).",
@@ -1402,6 +1493,32 @@ def __main__():
         db_management_logger.info("synced_tables: %s", result["synced_tables"])
         db_management_logger.info("failed_tables: %s", result["failed_tables"])
         db_management_logger.info("diff: %s", result["diff"])
+
+    elif args.command == "sync-all":
+        if not args.apply:
+            db_management_logger.info("Dry run; use --apply to apply changes.")
+        result = sync_all_environments_from_source(
+            source_environment=args.source_env,
+            branch_name=args.branch,
+            schema_only=not args.with_data,
+            copy_table_data=args.with_data,
+            sync_databases=True,
+            sync_tables=True,
+            apply=args.apply,
+            exclude_protected=True,
+        )
+        db_management_logger.info("dry_run: %s", result["dry_run"])
+        db_management_logger.info("source_environment: %s", result["source_environment"])
+        db_management_logger.info("targets: %s", result["targets"])
+        for target, target_result in result["results"].items():
+            db_management_logger.info(
+                "  %s: created_databases=%s failed_databases=%s synced_tables=%s failed_tables=%s",
+                target,
+                target_result.get("created_databases"),
+                target_result.get("failed_databases"),
+                target_result.get("synced_tables"),
+                target_result.get("failed_tables"),
+            )
 
     else:
         parser.print_help()
