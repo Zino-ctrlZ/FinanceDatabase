@@ -175,6 +175,12 @@ CLI and library functions for environment lifecycle: single-database create, ful
 - **Dry run by default** (`apply=False`). Set `apply=True` to perform changes.
 - Returns created_databases, failed_databases, synced_tables, failed_tables (partial success on failures).
 
+**`sync_all_environments_from_source(source_environment, ...)`**
+
+- Fan-out: call `sync_environment_from_source` for every env from `list_environments(exclude_prod=True)` except the source.
+- Same dry-run / `--apply` / `--with-data` semantics as pairwise sync.
+- Returns `targets`, per-target `results`, and `dry_run`.
+
 **`create_missing_databases_from_environment(...)`** / **`sync_missing_tables_from_environment(...)`**
 
 - Lower-level helpers; both default to dry run (`apply=False`).
@@ -388,6 +394,8 @@ Variables default to `none`; required ones are validated with a clear error.
 | `diff` | `SOURCE_ENV`, `TARGET_ENV` | Read-only comparison |
 | `sync` | `SOURCE_ENV`, `TARGET_ENV` | Dry run |
 | `sync-apply` | `SOURCE_ENV`, `TARGET_ENV` | `WITH_DATA=1` copies data; optional `BRANCH` |
+| `sync-all` | `SOURCE_ENV` | Dry-run fan-out to all non-protected envs |
+| `sync-all-apply` | `SOURCE_ENV` | Apply fan-out; `WITH_DATA=1` / `BRANCH` optional |
 | `list` | — | Registry environments (excludes protected; see `DB_PROTECTED_ENVIRONMENTS`) |
 | `test` | — | Unit tests under `tests/test_db_management_*.py` |
 
@@ -406,6 +414,8 @@ make -C dbase/database list
 make -C dbase/database diff SOURCE_ENV=long_bbands_v2 TARGET_ENV=scratch
 make -C dbase/database sync SOURCE_ENV=long_bbands_v2 TARGET_ENV=scratch
 make -C dbase/database sync-apply SOURCE_ENV=long_bbands_v2 TARGET_ENV=scratch WITH_DATA=1
+make -C dbase/database sync-all SOURCE_ENV=long_bbands_v2
+make -C dbase/database sync-all-apply SOURCE_ENV=long_bbands_v2
 make -C dbase/database delete ENV=test-mean-reversion CONFIRM=1
 ```
 
@@ -449,7 +459,7 @@ python -m dbase.database.db_management create \
 
 `create` does **not** call `seed_bot_config`. After schema-only create, seed bot config manually if needed (TFP-Algo: `make seed-bot-config ENV=... SOURCE_ENV=...`).
 
-#### `list`, `delete`, `diff`, `sync`
+#### `list`, `delete`, `diff`, `sync`, `sync-all`
 
 ```bash
 python -m dbase.database.db_management list
@@ -471,9 +481,19 @@ python -m dbase.database.db_management sync \
     --branch feature-branch \
     --with-data \
     --apply
+
+# Fan-out to every non-protected env except source (dry run unless --apply)
+python -m dbase.database.db_management sync-all \
+    --source-env long_bbands_v2
+
+python -m dbase.database.db_management sync-all \
+    --source-env long_bbands_v2 \
+    --with-data \
+    --apply
 ```
 
-Sync is **dry run by default**; pass `--apply` to change MySQL.
+Sync / sync-all are **dry run by default**; pass `--apply` to change MySQL.
+Protected environments (`DB_PROTECTED_ENVIRONMENTS`) are skipped as sync-all targets.
 
 ### Safety
 
