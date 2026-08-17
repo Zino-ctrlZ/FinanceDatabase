@@ -288,6 +288,7 @@ def get_proxy_url_from_env():
 
 
 def get_proxy_url():
+    global proxy_url
     return proxy_url
 
 
@@ -402,6 +403,11 @@ def ping_proxy_v2() -> PingProxyResult:
 
 def ping_proxy_v3() -> PingProxyResult:
     return _ping_proxy(V3_PING_THETA_URL, "v3")
+
+def set_proxy_url(url: str):
+    global proxy_url
+    proxy_url = url
+    logger.info(f"Set proxy URL to {url}")
 
 
 if get_proxy_url() is None:
