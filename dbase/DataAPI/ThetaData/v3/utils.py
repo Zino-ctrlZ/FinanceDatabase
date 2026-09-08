@@ -201,11 +201,13 @@ Multi-Threading Details
 _multi_threaded_range_fetch is used when endpoints don't support native date ranges:
 
 1. Generate business day range (excluding holidays)
-2. Build separate parameter sets for each date
-3. Use default intraday interval (from PRICING_CONFIG)
-4. Execute requests in parallel using runThreads()
-5. Concatenate results
-6. Return combined DataFrame
+2. Prefetch vendor ``list_dates`` once when contract ids are present
+3. Build separate parameter sets for each date
+4. Use default intraday interval (from PRICING_CONFIG)
+5. Execute requests in parallel using runThreads()
+6. On 472 (ThetaDataNotFound): omit the day if it is on ``list_dates``, else re-raise
+7. Concatenate non-empty frames
+8. Return combined DataFrame
 
 This is necessary for endpoints like /option/at_time/quote that only accept
 single dates, not ranges.
@@ -257,7 +259,12 @@ See Also
 
 import pandas as pd
 from dbase.utils import add_eod_timestamp
-from dbase.DataAPI.ThetaExceptions import MissingColumnError, ThetaDataNotFound
+from dbase.DataAPI.ThetaExceptions import (
+    MissingColumnError,
+    ThetaDataContainsFutureDateError,
+    ThetaDataNotFound,
+    is_thetadata_exception,
+)
 from dbase.DataAPI.ThetaData.v3.vars import (
     SETTINGS,
     ONE_DAY_MILLISECONDS,
@@ -273,10 +280,12 @@ from ..utils import _fetch_data, _parse_csv_to_dataframe
 from trade.helpers.Logging import setup_logger
 from dbase.DataAPI.ThetaData.utils import convert_string_interval_to_miliseconds, resample, normalize_date_format
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS
-from typing import Callable, Any
+from typing import Callable, Any, Optional, Set
 from trade.helpers.decorators import timeit # noqa
 
 logger = setup_logger("dbase.DataAPI.ThetaData.v3.utils")
+## 472 on a session list_dates advertised: omit that day instead of aborting the range.
+listed_gap_logger = setup_logger("dbase.DataAPI.ThetaData.v3.listed_quote_gap")
 
 
 ##NOTE: Interested in seeing additional overhead
@@ -284,18 +293,41 @@ logger = setup_logger("dbase.DataAPI.ThetaData.v3.utils")
 def _new_dataframe_formatting(
     df: pd.DataFrame, interval: str, is_bulk: bool = False, ignore_drop_conditional: bool = False, force_resampling: bool = False
 ) -> pd.DataFrame:
-    """
-    Formats the DataFrame to a new standard structure.
-    """
+    """Normalize a raw ThetaData CSV frame to the v3 column/index contract.
 
-    ## Must have timestamp column
+    Empty frames (every session omitted, e.g. listed 472s) return empty without
+    requiring ``timestamp``. Column names are lowercased before the timestamp
+    check so ``Timestamp`` still parses.
+
+    Args:
+        df: Raw concatenated per-date CSV frame.
+        interval: Requested interval (used for resampling).
+        is_bulk: Keep contract identifier columns when True.
+        ignore_drop_conditional: Skip dropping strike/right/expiration columns.
+        force_resampling: Resample even when the interval looks like EOD.
+
+    Returns:
+        Formatted DataFrame with a datetime index.
+
+    Raises:
+        MissingColumnError: Non-empty frame with no timestamp column.
+        ValueError: Interval below the configured minimum.
+    """
+    ## Listed-472 omit can concat to an empty frame with no columns.
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+    ## Some parsers leave timestamp as the index name rather than a column.
+    if df.index.name is not None and str(df.index.name).lower() == "timestamp" and "timestamp" not in [
+        str(c).lower() for c in df.columns
+    ]:
+        df = df.reset_index()
+    df.columns = df.columns.str.lower()
     if "timestamp" not in df.columns:
         raise MissingColumnError(
             "Dataframe is missing required 'timestamp' column. Reach out to chidi if you see this error."
         )
-
-    df = df.copy()
-    df.columns = df.columns.str.lower()
     df.rename(columns={"timestamp": "datetime"}, inplace=True)
     df["datetime"] = pd.to_datetime(df["datetime"])
 
@@ -397,6 +429,128 @@ def _new_dataframe_formatting(
     return df
 
 
+def _iso_session_date(date_param: Optional[str]) -> Optional[str]:
+    """Normalize a request date param to ``YYYY-MM-DD``.
+
+    Args:
+        date_param: Vendor date string (``YYYYMMDD`` or ``YYYY-MM-DD``).
+
+    Returns:
+        ISO date string, or None when ``date_param`` is missing.
+    """
+    if date_param is None:
+        return None
+    return normalize_date_format(str(date_param), _type=1)
+
+
+def _load_listed_quote_dates(
+    symbol: str,
+    exp: Optional[Any],
+    right: Optional[str],
+    strike: Optional[float],
+) -> Optional[Set[str]]:
+    """Load vendor quote ``list_dates`` once for a contract.
+
+    Lazy-imports ``list_dates`` so this module can load before the switcher.
+
+    Args:
+        symbol: Underlying ticker.
+        exp: Expiration (``YYYY-MM-DD`` or datetime).
+        right: Option right.
+        strike: Strike price.
+
+    Returns:
+        Set of ISO dates, or None when contract ids are incomplete or the
+        calendar call fails (472 then re-raises instead of omitting).
+    """
+    if symbol is None or exp is None or right is None or strike is None:
+        return None
+    ## Lazy import: switcher imports endpoints which import this module.
+    from dbase.DataAPI.ThetaData import list_dates
+
+    try:
+        dates = list_dates(symbol=symbol, exp=exp, right=right, strike=strike)
+    except Exception as exc:
+        logger.warning(
+            "Could not prefetch list_dates for %s %s%s exp=%s: %s. "
+            "472 will abort the range.",
+            symbol,
+            strike,
+            right,
+            exp,
+            exc,
+        )
+        return None
+    if dates is None:
+        return None
+    listed: Set[str] = set()
+    for d in dates:
+        iso = _iso_session_date(None if d is None else str(d))
+        if iso is not None:
+            listed.add(iso)
+    return listed
+
+
+def _frame_for_listed_not_found(
+    params: dict,
+    listed_dates: Optional[Set[str]],
+    exc: ThetaDataNotFound,
+) -> pd.DataFrame:
+    """Return an empty frame when 472 hits a listed session; otherwise re-raise.
+
+    Args:
+        params: Per-date request params (includes ``date`` as ``YYYYMMDD``).
+        listed_dates: Prefetched ``list_dates`` ISO set, or None if unknown.
+        exc: The 472 exception from this date's fetch.
+
+    Returns:
+        Empty DataFrame so ``concat`` omits this session.
+
+    Raises:
+        ThetaDataNotFound: Calendar unknown, date missing from params, or
+            session is not on ``list_dates``.
+    """
+    if listed_dates is None:
+        raise exc
+    iso = _iso_session_date(params.get("date"))
+    if iso is None or iso not in listed_dates:
+        raise exc
+    listed_gap_logger.warning(
+        "ThetaData 472 for a session listed by list_dates; omitting from range. "
+        "symbol=%s expiration=%s strike=%s right=%s date=%s",
+        params.get("symbol"),
+        params.get("expiration"),
+        params.get("strike"),
+        params.get("right"),
+        iso,
+    )
+    return pd.DataFrame()
+
+
+def _frame_for_future_date(params: dict, exc: ThetaDataContainsFutureDateError) -> pd.DataFrame:
+    """Omit a session ThetaData rejected as still in the future.
+
+    Args:
+        params: Per-date request params (includes ``date`` as ``YYYYMMDD``).
+        exc: The 400 future-date exception from this date's fetch.
+
+    Returns:
+        Empty DataFrame so ``concat`` skips this session.
+    """
+    iso = _iso_session_date(params.get("date"))
+    listed_gap_logger.warning(
+        "ThetaData 400 future-date; omitting from range. "
+        "symbol=%s expiration=%s strike=%s right=%s date=%s err=%s",
+        params.get("symbol"),
+        params.get("expiration"),
+        params.get("strike"),
+        params.get("right"),
+        iso,
+        exc,
+    )
+    return pd.DataFrame()
+
+
 def _build_params(
     symbol: str,
     start_date: str = None,
@@ -461,7 +615,16 @@ def _multi_threaded_range_fetch(
         print_url (bool): Whether to print the request URL for the first request.
         **kwargs: Additional parameters for the request.
     Returns:
-        pd.DataFrame: The concatenated DataFrame containing historical quote data.
+        pd.DataFrame: Concatenated per-date frames. Days that 472'd but are on
+            ``list_dates`` are omitted.
+
+    Raises:
+        ThetaDataNotFound: 472 for a session not listed by ``list_dates``, or when
+            the calendar could not be prefetched.
+        ThetaDataContainsFutureDateError: Not raised from the worker; future-date
+            400s are omitted.
+        Exception: Other ThetaData domain errors from a worker. Transient
+            fetch/parse errors log and omit that date.
     """
     logger.warning(LOOP_WARN_MSG + f" Endpoint: {url}")
 
@@ -477,6 +640,14 @@ def _multi_threaded_range_fetch(
     if "interval" in kwargs:
         kwargs.pop("interval")
 
+    ## One calendar call for the range so workers only do a set lookup on 472.
+    listed_dates = _load_listed_quote_dates(
+        symbol=symbol,
+        exp=kwargs.get("exp"),
+        right=kwargs.get("right"),
+        strike=kwargs.get("strike"),
+    )
+
     ## Build params for each date
     params_set = [
         _build_params(
@@ -491,16 +662,33 @@ def _multi_threaded_range_fetch(
     ## Prepare inputs for threading
     inputs = [[url] * len(dt_range), params_set, [print_url] + [False] * (len(dt_range) - 1)]
 
-    ## Thread fetch function
     def _thread_fetch(url, params, print_url):
+        """Fetch one date; omit listed 472s and future-date 400s; re-raise other ThetaData errors."""
         try:
+            ## Connection resets are retried inside _fetch_data (expo backoff, 5 tries).
             txt = _fetch_data(url, params, print_url)
             return _parse_csv_to_dataframe(txt)
+        except ThetaDataNotFound as e:
+            ## Listed session with no tape: omit so the rest of the range survives.
+            return _frame_for_listed_not_found(params, listed_dates, e)
+        except ThetaDataContainsFutureDateError as e:
+            ## +1d pads (and similar) can include tomorrow; omit that session only.
+            return _frame_for_future_date(params, e)
         except Exception as e:
+            ## Other ThetaData domain errors stay fatal (permissions, disconnect, …).
+            ## Transient per-date fetch/parse noise should not fail the whole range.
+            if is_thetadata_exception(e) or isinstance(e, MissingColumnError):
+                raise
             logger.error(f"Error fetching data for params {params}: {e}")
-            return pd.DataFrame()  # Return empty DataFrame on error
+            return pd.DataFrame()
 
-    return pd.concat(runThreads(_thread_fetch, inputs))
+    frames = runThreads(_thread_fetch, inputs)
+    nonempty = [frame for frame in frames if isinstance(frame, pd.DataFrame) and not frame.empty]
+    if not nonempty:
+        ## Keep a timestamp column so callers that format immediately do not
+        ## raise MissingColumnError when every session was a listed 472 omit.
+        return pd.DataFrame(columns=["timestamp"])
+    return pd.concat(nonempty, ignore_index=True)
 
 
 def _get_symbol_for_date(symbol: str, date: str) -> str:
