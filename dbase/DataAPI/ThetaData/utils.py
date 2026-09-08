@@ -204,12 +204,21 @@ See Also
 """
 
 import json
+import os
 from io import StringIO
+import backoff
 import requests
-from dbase.DataAPI.ThetaExceptions import raise_thetadata_exception, is_thetadata_exception # noqa
+from requests.exceptions import ChunkedEncodingError, ConnectionError as RequestsConnectionError, Timeout
+from dbase.DataAPI.ThetaExceptions import (
+    ThetaDataDisconnected,
+    ThetaDataOSLimit,
+    ThetaDataServerRestart,
+    is_thetadata_exception,  # noqa: F401
+    raise_thetadata_exception,
+)
 from trade.helpers.helper import parse_option_tick
 from trade.helpers.Logging import setup_logger
-from typing import Tuple
+from typing import Optional, Tuple
 import re
 from datetime import datetime
 import pandas as pd
@@ -598,12 +607,91 @@ def _split_date_range_inclusive(start_date: str, end_date: str, max_days: int = 
     return ranges
 
 
+@backoff.on_exception(
+    backoff.expo,
+    (
+        RequestsConnectionError,
+        ChunkedEncodingError,
+        Timeout,
+        ThetaDataOSLimit,
+        ThetaDataDisconnected,
+        ThetaDataServerRestart,
+    ),
+    max_tries=5,
+    logger=logger,
+)
+def _fetch_data_single(
+    theta_url: str,
+    params: dict,
+    print_url: bool = False,
+    dry_run: Optional[bool] = None,
+) -> str:
+    """Fetch one ThetaData request, retrying transient connection and terminal errors.
+
+    Connection resets (errno 54) show up as ``requests.ConnectionError`` wrapping
+    ``ConnectionResetError``. That is common under v3 multi-threaded per-date
+    fetches when the terminal or proxy drops a socket. Domain errors such as
+    not-found are not retried.
+
+    Args:
+        theta_url: ThetaData API endpoint URL.
+        params: Query parameters for the API request.
+        print_url: Whether to print the request URL.
+        dry_run: Force dry-run mode. If None, checks ``THETADATA_DRY_RUN``.
+
+    Returns:
+        Raw CSV text from the terminal or proxy.
+
+    Raises:
+        ThetaDataOSLimit: Rate-limit / OS-limit response after retries.
+        ThetaDataDisconnected: Terminal disconnect after retries.
+        ThetaDataServerRestart: Terminal restart after retries.
+        requests.RequestException: Transport errors after retries.
+    """
+    if dry_run is None:
+        dry_run = os.environ.get("THETADATA_DRY_RUN", "false").lower() == "true"
+
+    if dry_run:
+        logger.info(f"[DRY RUN] Would call: {theta_url}")
+        logger.info(f"[DRY RUN] With params: {params}")
+
+        try:
+            from .tests.dry_run import get_dry_run_response
+
+            mock_data = get_dry_run_response(theta_url, params)
+            if print_url:
+                print(f"[DRY RUN] Request URL: {theta_url}?{params}")
+            return mock_data
+        except ImportError:
+            logger.warning("[DRY RUN] Mock responses not available, returning minimal data")
+            return "timestamp\n20240101"
+
+    instance_url = get_proxy_url()
+    if instance_url:
+        response = request_from_proxy(theta_url, params, instance_url)
+        text = response.json()["data"]
+        url = response.json().get("url", "N/A")
+    else:
+        response = requests.get(theta_url, params=params)
+        text = response.text
+        url = response.url
+    if print_url:
+        print(f"Request URL: {url}")
+    text = text.replace("created", "timestamp")
+
+    _submit_log(url, response)
+    raise_thetadata_exception(response=response, params=params, proxy=instance_url)
+    return text
+
+
 def _fetch_data(theta_url: str, params: dict, print_url: bool = False, dry_run: bool = None):
     """
     Fetch data from ThetaData API, using proxy if available.
 
     Supports dry-run mode for testing without ThetaData Terminal running.
     Set THETADATA_DRY_RUN=true environment variable to enable.
+    Each HTTP call retries transient connection resets and ThetaData
+    OS-limit / disconnect / restart responses (exponential backoff, 5 tries).
 
     Args:
         theta_url (str): The ThetaData API endpoint URL.
@@ -614,50 +702,6 @@ def _fetch_data(theta_url: str, params: dict, print_url: bool = False, dry_run: 
         str | pd.DataFrame: Response data as raw CSV text, or a stitched DataFrame
         when a start_date/end_date range is provided.
     """
-    import os
-
-    def _fetch_data_single(theta_url: str, params: dict, print_url: bool, dry_run: bool) -> str:
-        # Check if dry-run mode is enabled
-        if dry_run is None:
-            dry_run = os.environ.get("THETADATA_DRY_RUN", "false").lower() == "true"
-
-        # Dry-run mode: return mock data without making actual request
-        if dry_run:
-            logger.info(f"[DRY RUN] Would call: {theta_url}")
-            logger.info(f"[DRY RUN] With params: {params}")
-
-            # Try to import dry_run module for mock responses
-            try:
-                from .tests.dry_run import get_dry_run_response
-
-                mock_data = get_dry_run_response(theta_url, params)
-                if print_url:
-                    print(f"[DRY RUN] Request URL: {theta_url}?{params}")
-                return mock_data
-            except ImportError:
-                # Fallback if test module not available
-                logger.warning("[DRY RUN] Mock responses not available, returning minimal data")
-                return "timestamp\n20240101"
-
-        # Normal execution - make actual API request
-        instance_url = get_proxy_url()
-        if instance_url:
-            response = request_from_proxy(theta_url, params, instance_url)
-            text = response.json()["data"]
-            url = response.json().get("url", "N/A")
-        else:
-            response = requests.get(theta_url, params=params)
-            text = response.text
-            url = response.url
-        if print_url:
-            print(f"Request URL: {url}")
-        ## Format text for consistency
-        text = text.replace("created", "timestamp")
-
-        ## Log the request latency
-        _submit_log(url, response)
-        raise_thetadata_exception(response=response, params=params, proxy=instance_url)
-        return text
 
     has_range = "start_date" in params and "end_date" in params and params.get("start_date") and params.get("end_date")
     if not has_range:
