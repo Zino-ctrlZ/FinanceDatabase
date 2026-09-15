@@ -417,6 +417,7 @@ def clone_database_schema(
             "--skip-add-drop-database",  # do NOT emit DROP DATABASE
             "--set-charset",
             "--skip-routines",
+            "--set-gtid-purged=OFF",
             *extra_mysqldump_args,
         ]
 
