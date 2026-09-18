@@ -229,11 +229,6 @@ from trade import PRICING_CONFIG # noqa
 
 logger = setup_logger("dbase.DataAPI.ThetaData")
 duplicated_logger = setup_logger("dbase.DataAPI.ThetaData.duplicated")
-EMPTY_DF_SAMPLES = {
-    "retrieve_openInterest": pd.DataFrame(
-        columns=["Open_interest", "Date", "time", "Datetime"]
-    )
-}
 
 
 def quote_to_eod_patch(
@@ -248,10 +243,8 @@ def quote_to_eod_patch(
     quote_func=None,
     **kwargs,
 ) -> pd.DataFrame:
-    """
-    Retrieve end-of-day quote data for a specific option contract.
-    Sometimes ThetaData EOD API has issues with parsing. If the specific error is caught,
-    this function will try to retrieve the quote data and convert it to EOD format.
+    """Forward to the switcher quote-to-EOD path (listed-session coverage included).
+
     Parameters
     ----------
     symbol : str
@@ -268,74 +261,44 @@ def quote_to_eod_patch(
         The strike price of the option.
     print_url : bool, optional
         Whether to print the URL used for the data request (default is False).
+    quote_func : callable, optional
+        Quote retriever; defaults to switcher ``retrieve_quote``.
     Returns
     -------
     pd.DataFrame
-        A DataFrame containing the end-of-day quote data for the specified option contract.
+        End-of-day quote columns for listed sessions in the request window.
     """
-    if quote_func is None:
-        quote_func = retrieve_quote
+    from dbase.DataAPI.ThetaData.switcher import quote_to_eod_patch as _switcher_quote_to_eod
 
-
-    q = quote_func(
-        symbol=symbol,
-        end_date=end_date,
-        exp=exp,
-        right=right,
-        start_date=start_date,
-        strike=strike,
+    return _switcher_quote_to_eod(
+        symbol,
+        end_date,
+        exp,
+        right,
+        start_date,
+        strike,
         print_url=print_url,
-        interval="1d",
+        quote_func=quote_func,
+        **kwargs,
     )
-    q.index = add_eod_timestamp(q.index)
-    if not q.empty:
-        q_to_eod = q[
-            [
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume",
-                "Bid_size",
-                "Closebid",
-                "Ask_size",
-                "Closeask",
-                "Midpoint",
-                "Weighted_midpoint",
-            ]
-        ]
-    else:
-        q_to_eod = pd.DataFrame(
-            columns=[
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume",
-                "Bid_size",
-                "Closebid",
-                "Ask_size",
-                "Closeask",
-                "Midpoint",
-                "Weighted_midpoint",
-            ]
-        )
-    q_to_eod.rename(
-        columns={
-            "Closebid": "CloseBid",
-            "Closeask": "CloseAsk",
-        },
-        inplace=True,
-    )
-    q_to_eod.index = pd.to_datetime(q_to_eod.index)
-    q_to_eod.index.name = "Datetime"
-
-    ## Quote v2 doesn't have volume data, so we set it to NaN
-    q_to_eod["Volume"] = np.nan
-    return q_to_eod
 
 
 def resolve_ticker_history(kwargs, _callable, _type="historical", skip_index_filtering=False):
+    """Fetch history across a ticker rename (e.g. FB → META).
+
+    Raises ``ThetaDataNotFound`` when every attempted root returns no rows, with
+    ``old_symbol`` / ``new_symbol`` and ``old_missing`` / ``new_missing`` in the
+    message so a META vs FB vs both miss is obvious.
+
+    Args:
+        kwargs: Retrieval kwargs including ``symbol``, ``start_date``, and usually ``exp``.
+        _callable: Endpoint function to call per root.
+        _type: ``historical``, ``snapshot``, or ``list_dates``.
+        skip_index_filtering: When True, do not clip frames to the request window.
+
+    Returns:
+        Combined frame, a single successful side, or merged ``list_dates``.
+    """
     if _type == "historical":
         tick = kwargs["symbol"]
         change_date = TICK_CHANGE_ALIAS[tick][-1]
@@ -346,21 +309,23 @@ def resolve_ticker_history(kwargs, _callable, _type="historical", skip_index_fil
         old_tick_kwargs["symbol"] = old_tick
         new_tick_kwargs["symbol"] = new_tick
 
+        old_attempted = compare_dates.is_before(
+            pd.Timestamp(kwargs["start_date"]), pd.Timestamp(change_date)
+        )
+        use_date = kwargs["exp"] if kwargs.get("exp") else kwargs["end_date"]
+        new_attempted = compare_dates.is_on_or_after(
+            pd.Timestamp(use_date), pd.Timestamp(change_date)
+        )
+
         ## Retrieve the data for the old tick
         try:
-            old_tick_data = (
-                _callable(**old_tick_kwargs)
-                if compare_dates.is_before(
-                    pd.Timestamp(kwargs["start_date"]), pd.Timestamp(change_date)
-                )
-                else None
-            )
+            old_tick_data = _callable(**old_tick_kwargs) if old_attempted else None
             if not skip_index_filtering and old_tick_data is not None:
                 old_tick_data = old_tick_data[
                     (old_tick_data.index >= pd.Timestamp(kwargs["start_date"]))
                     & (old_tick_data.index <= pd.Timestamp(kwargs["end_date"]))
                 ]
-        
+
         except ThetaDataNotFound as e:
             logger.info(
                 f"No data found for Old_tick {old_tick} on {kwargs['start_date']}"
@@ -370,34 +335,37 @@ def resolve_ticker_history(kwargs, _callable, _type="historical", skip_index_fil
 
         ## Retrieve the data for the new tick
         try:
-            use_date = kwargs["exp"] if kwargs.get("exp") else kwargs["end_date"]
             new_tick_data = (
-                _callable(**new_tick_kwargs)
-                if compare_dates.is_on_or_after(
-                    pd.Timestamp(use_date), pd.Timestamp(change_date)
-                )
-                else None
+                _callable(**new_tick_kwargs) if new_attempted else None
             )  ## Opting for expiration date instead of end date cause data cannot go beyond expiration date
             if not skip_index_filtering and new_tick_data is not None:
                 new_tick_data = new_tick_data[
                     (new_tick_data.index >= pd.Timestamp(kwargs["start_date"]))
                     & (new_tick_data.index <= pd.Timestamp(kwargs["end_date"]))
                 ]
-        
+
         except ThetaDataNotFound as e:
             logger.info(f"No data found for new_tick {new_tick} on {use_date}")
             logger.info(f"Error: {e}")
             new_tick_data = None
 
-        ## If no data is found for the old tick, then we will just return the new tick data. Change to dataframe to avoid errors when concatenating
-        if old_tick_data is None:
-            logger.info(f"No data found for Old_tick {old_tick} on {kwargs['start_date']}")
-            old_tick_data = EMPTY_DF_SAMPLES.get(_callable.__name__, pd.DataFrame())
-        if new_tick_data is None:
-            logger.info(f"No data found for new_tick {new_tick} on {use_date}")
-            new_tick_data = EMPTY_DF_SAMPLES.get(_callable.__name__, pd.DataFrame())
-        full_data = pd.concat([old_tick_data, new_tick_data])
-        return full_data
+        old_ok = old_tick_data is not None and not old_tick_data.empty
+        new_ok = new_tick_data is not None and not new_tick_data.empty
+        old_missing = old_attempted and not old_ok
+        new_missing = new_attempted and not new_ok
+
+        if not old_ok and not new_ok:
+            raise ThetaDataNotFound(
+                "No data after ticker-change split. "
+                f"requested_symbol={tick} old_symbol={old_tick} new_symbol={new_tick} "
+                f"change_date={change_date} "
+                f"old_attempted={old_attempted} old_missing={old_missing} "
+                f"new_attempted={new_attempted} new_missing={new_missing} "
+                f"params={kwargs}"
+            )
+        if old_ok and new_ok:
+            return pd.concat([old_tick_data, new_tick_data])
+        return old_tick_data if old_ok else new_tick_data
     elif _type == "snapshot":
         tick = kwargs["symbol"]
         change_date = TICK_CHANGE_ALIAS[tick][-1]
@@ -433,6 +401,13 @@ def resolve_ticker_history(kwargs, _callable, _type="historical", skip_index_fil
             new_dates = _callable(**new_tick_kwargs)
         except ThetaDataNotFound:
             new_dates = []
+        if not old_dates and not new_dates:
+            raise ThetaDataNotFound(
+                "No data after ticker-change split. "
+                f"requested_symbol={tick} old_symbol={old_tick} new_symbol={new_tick} "
+                f"change_date={change_date} old_missing=True new_missing=True "
+                f"params={kwargs}"
+            )
         full_dates = list(set(old_dates + new_dates))
         full_dates.sort()
         return full_dates

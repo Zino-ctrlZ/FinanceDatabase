@@ -108,64 +108,22 @@ def quote_to_eod_patch(
     Returns
     -------
     pd.DataFrame
-        A DataFrame containing the end-of-day quote data for the specified option contract.
+        End-of-day quote columns after the shared switcher quote-to-EOD path
+        (listed-session coverage included).
     """
-    if quote_func is None:
-        quote_func = retrieve_quote
+    from .switcher import quote_to_eod_patch as _switcher_quote_to_eod
 
-    q = quote_func(
-        symbol=symbol,
-        end_date=end_date,
-        exp=exp,
-        right=right,
-        start_date=start_date,
-        strike=strike,
+    return _switcher_quote_to_eod(
+        symbol,
+        end_date,
+        exp,
+        right,
+        start_date,
+        strike,
         print_url=print_url,
-        interval="1d",
+        quote_func=quote_func,
+        **kwargs,
     )
-    q.index = add_eod_timestamp(q.index)
-    if not q.empty:
-        q_to_eod = q[
-            [
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume",
-                "Bid_size",
-                "Closebid",
-                "Ask_size",
-                "Closeask",
-                "Midpoint",
-                "Weighted_midpoint",
-            ]
-        ]
-    else:
-        q_to_eod = pd.DataFrame(
-            columns=[
-                "Open",
-                "High",
-                "Low",
-                "Close",
-                "Volume",
-                "Bid_size",
-                "Closebid",
-                "Ask_size",
-                "Closeask",
-                "Midpoint",
-                "Weighted_midpoint",
-            ]
-        )
-    q_to_eod.rename(
-        columns={
-            "Closebid": "CloseBid",
-            "Closeask": "CloseAsk",
-        },
-        inplace=True,
-    )
-    q_to_eod.index = pd.to_datetime(q_to_eod.index)
-    q_to_eod.index.name = "Datetime"
-    return q_to_eod
 
 
 DO_NOT_EXPORT = [

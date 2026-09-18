@@ -102,7 +102,7 @@ Configuration
 Data formatting can be customized via the SETTINGS singleton:
 
 ```python
-from dbase.DataAPI._ThetaData.v3.vars import SETTINGS
+from dbase.DataAPI.ThetaData.v3.vars import SETTINGS, ListedSessionNotFoundPolicy
 
 # Use legacy formatting to match V2 output
 SETTINGS.use_old_formatting = True
@@ -110,6 +110,9 @@ SETTINGS.use_old_formatting = True
 # Customize date formats
 SETTINGS.eod_format = "%Y-%m-%d"
 SETTINGS.intra_format = "%Y-%m-%d %H:%M:%S"
+
+# Missing listed quote sessions after EOD: omit (default) or raise
+SETTINGS.listed_session_not_found = ListedSessionNotFoundPolicy.RAISE
 ```
 
 Notes

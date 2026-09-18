@@ -29,11 +29,18 @@ ThetaDataV3Controls (Singleton):
         Datetime format string for intraday data.
         Default: "%Y-%m-%d %H:%M:%S" (e.g., "2024-12-20 15:30:00")
 
+    listed_session_not_found : ListedSessionNotFoundPolicy
+        After quote-to-EOD resample, raise or omit when a ``list_dates``
+        session inside the request window has no rows. Default: omit.
+
 Usage:
 
 .. code-block:: python
 
-    from dbase.DataAPI.ThetaData.v3.vars import SETTINGS
+    from dbase.DataAPI.ThetaData.v3.vars import (
+        SETTINGS,
+        ListedSessionNotFoundPolicy,
+    )
 
     # Disable old formatting (use new V3 format)
     SETTINGS.use_old_formatting = False
@@ -41,6 +48,9 @@ Usage:
     # Customize date formats
     SETTINGS.eod_format = "%Y%m%d"
     SETTINGS.intra_format = "%Y-%m-%d %H:%M"
+
+    # Listed quote session with no tape: omit (default) or raise
+    SETTINGS.listed_session_not_found = ListedSessionNotFoundPolicy.OMIT
 
 API Endpoints
 -------------
@@ -164,16 +174,35 @@ See Also
 """
 
 from dataclasses import dataclass
+from enum import Enum
 from trade.helpers.helper_types import SingletonMetaClass
 from trade import PRICING_CONFIG
 from dbase.DataAPI.ThetaData.utils import convert_string_interval_to_miliseconds
 
 
+class ListedSessionNotFoundPolicy(str, Enum):
+    """What to do when ``list_dates`` advertised a session but quote tape is missing."""
+
+    RAISE = "raise"
+    OMIT = "omit"
+
+
 @dataclass
 class ThetaDataV3Controls(metaclass=SingletonMetaClass):
+    """Runtime ThetaData v3 settings (singleton).
+
+    Attributes:
+        use_old_formatting: Match v2 column capitalization and EOD timestamps.
+        eod_format: Date format for EOD indexes.
+        intra_format: Datetime format for intraday indexes.
+        listed_session_not_found: After quote-to-EOD resample, ``omit`` listed
+            sessions with no rows (default), or ``raise``.
+    """
+
     use_old_formatting: bool = True
     eod_format: str = "%Y-%m-%d"
     intra_format: str = "%Y-%m-%d %H:%M:%S"
+    listed_session_not_found: ListedSessionNotFoundPolicy = ListedSessionNotFoundPolicy.OMIT
 
 
 SETTINGS = ThetaDataV3Controls()
