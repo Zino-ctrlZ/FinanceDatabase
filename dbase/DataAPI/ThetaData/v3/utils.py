@@ -200,14 +200,15 @@ Multi-Threading Details
 -----------------------
 _multi_threaded_range_fetch is used when endpoints don't support native date ranges:
 
-1. Generate business day range (excluding holidays)
-2. Prefetch vendor ``list_dates`` once when contract ids are present
+1. Prefetch vendor ``list_dates`` when the contract is fully specified
+2. Query listed sessions inside ``[start_date, end_date]`` (weekday grid only if ids are incomplete)
 3. Build separate parameter sets for each date
 4. Use default intraday interval (from PRICING_CONFIG)
 5. Execute requests in parallel using runThreads()
-6. On 472 (ThetaDataNotFound): omit the day if it is on ``list_dates``, else re-raise
+6. On 472 (ThetaDataNotFound): omit that day so the rest of the range survives
 7. Concatenate non-empty frames
-8. Return combined DataFrame
+8. After quote-to-EOD, ``enforce_listed_quote_coverage`` raises or omits
+   missing listed sessions per ``SETTINGS.listed_session_not_found``
 
 This is necessary for endpoints like /option/at_time/quote that only accept
 single dates, not ranges.
@@ -246,7 +247,8 @@ Notes
 -----
 - All functions are designed for internal use by endpoints.py
 - Ticker change data comes from TICK_CHANGE_ALIAS mapping
-- Holiday exclusion uses HOLIDAY_SET from trade module
+- Quote range queries for a full contract use vendor ``list_dates``; incomplete
+  contracts still use a holiday-stripped weekday grid
 - Resampling respects business hours via enforce_bus_hours()
 
 See Also
@@ -271,6 +273,8 @@ from dbase.DataAPI.ThetaData.v3.vars import (
     MINIMUM_MILLISECONDS,
     VALID_INTERVALS,
     LOOP_WARN_MSG,
+    ListedSessionNotFoundPolicy,
+    HISTORICAL_QUOTE,
 )
 
 from trade import PRICING_CONFIG, HOLIDAY_SET
@@ -280,7 +284,8 @@ from ..utils import _fetch_data, _parse_csv_to_dataframe
 from trade.helpers.Logging import setup_logger
 from dbase.DataAPI.ThetaData.utils import convert_string_interval_to_miliseconds, resample, normalize_date_format
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS
-from typing import Callable, Any, Optional, Set
+from typing import Callable, Any, List, Optional, Set
+from urllib.parse import urlencode
 from trade.helpers.decorators import timeit # noqa
 
 logger = setup_logger("dbase.DataAPI.ThetaData.v3.utils")
@@ -461,19 +466,21 @@ def _load_listed_quote_dates(
 
     Returns:
         Set of ISO dates, or None when contract ids are incomplete or the
-        calendar call fails (472 then re-raises instead of omitting).
+        calendar call fails (the range fetch then raises instead of guessing
+        a weekday grid).
     """
     if symbol is None or exp is None or right is None or strike is None:
         return None
     ## Lazy import: switcher imports endpoints which import this module.
-    from dbase.DataAPI.ThetaData import list_dates
+    from dbase.DataAPI.ThetaData.list_dates_cache import get_listed_option_dates
 
     try:
-        dates = list_dates(symbol=symbol, exp=exp, right=right, strike=strike)
+        dates = get_listed_option_dates(
+            ticker=symbol, strike=float(strike), right=right, expiration=exp
+        )
     except Exception as exc:
         logger.warning(
-            "Could not prefetch list_dates for %s %s%s exp=%s: %s. "
-            "472 will abort the range.",
+            "Could not prefetch list_dates for %s %s%s exp=%s: %s.",
             symbol,
             strike,
             right,
@@ -491,39 +498,375 @@ def _load_listed_quote_dates(
     return listed
 
 
+def _listed_dates_in_request_window(
+    listed_dates: Set[str],
+    start_date: str,
+    end_date: str,
+) -> List[str]:
+    """Return listed ISO dates clipped to ``[start_date, end_date]``.
+
+    Args:
+        listed_dates: Vendor ``list_dates`` ISO set.
+        start_date: Inclusive request start (``YYYY-MM-DD`` or ``YYYYMMDD``).
+        end_date: Inclusive request end.
+
+    Returns:
+        Sorted ISO dates inside the request window.
+
+    Raises:
+        ThetaDataNotFound: Start or end could not be parsed.
+    """
+    start_iso = _iso_session_date(start_date)
+    end_iso = _iso_session_date(end_date)
+    if start_iso is None or end_iso is None:
+        raise ThetaDataNotFound(
+            f"Could not parse quote range window start={start_date!r} end={end_date!r}"
+        )
+    return sorted(d for d in listed_dates if start_iso <= d <= end_iso)
+
+
+def _index_iso_dates(index: pd.Index) -> Set[str]:
+    """Map a DatetimeIndex (possibly with EOD timestamps) to calendar ISO dates.
+
+    Args:
+        index: Quote or EOD frame index.
+
+    Returns:
+        Set of ``YYYY-MM-DD`` session dates present on the index.
+    """
+    if index is None or len(index) == 0:
+        return set()
+    ts = pd.to_datetime(index)
+    return set(pd.Index(ts).strftime("%Y-%m-%d"))
+
+
+def _omits_missing_listed_sessions() -> bool:
+    """Return True when SETTINGS says to drop missing listed sessions.
+
+    Returns:
+        True for ``omit`` (string or enum); False for raise.
+    """
+    policy = SETTINGS.listed_session_not_found
+    if isinstance(policy, ListedSessionNotFoundPolicy):
+        return policy is ListedSessionNotFoundPolicy.OMIT
+    return str(policy).strip().lower() == ListedSessionNotFoundPolicy.OMIT.value
+
+
+def _v2_hist_request_url(
+    endpoint: str,
+    *,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    exp: str,
+    right: str,
+    strike: float,
+) -> str:
+    """Rebuild a v2 hist URL (root / YYYYMMDD / strike*1000).
+
+    Args:
+        endpoint: v2 path such as ``/v2/hist/option/eod``.
+        symbol: Underlying root.
+        start_date: Inclusive start.
+        end_date: Inclusive end.
+        exp: Expiration.
+        right: Option right as sent to v2.
+        strike: Strike in dollars.
+
+    Returns:
+        ``endpoint?root=...`` string.
+    """
+    query = {
+        "end_date": int(pd.to_datetime(end_date).strftime("%Y%m%d")),
+        "root": symbol,
+        "use_csv": "true",
+        "exp": int(pd.to_datetime(exp).strftime("%Y%m%d")),
+        "right": right,
+        "start_date": int(pd.to_datetime(start_date).strftime("%Y%m%d")),
+        "strike": int(float(strike) * 1000),
+    }
+    return f"{endpoint}?{urlencode(query)}"
+
+
+def _format_coverage_location(
+    *,
+    url: Optional[str],
+    endpoint: Optional[str],
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    exp: str,
+    right: str,
+    strike: float,
+    interval: Optional[str] = None,
+    missing: Optional[List[str]] = None,
+) -> str:
+    """Prefer a reconstructed request URL; otherwise the endpoint path.
+
+    Quote history is per session. When ``missing`` is set and the endpoint is
+    quote, pin ``date`` to the first missing listed day so the URL matches the
+    worker that 472'd.
+
+    Args:
+        url: Caller-supplied request URL, used when reconstruction fails.
+        endpoint: v2 or v3 hist path.
+        symbol: Underlying ticker.
+        start_date: Inclusive request start.
+        end_date: Inclusive request end.
+        exp: Expiration.
+        right: Option right.
+        strike: Strike price.
+        interval: OHLC interval when valid for v3.
+        missing: Listed ISO dates absent from the frame.
+
+    Returns:
+        ``url=...`` or ``endpoint=...`` fragment for logs and ``ThetaDataNotFound``.
+    """
+    reconstructed: Optional[str] = None
+    if endpoint:
+        try:
+            if "/v2/" in str(endpoint):
+                reconstructed = _v2_hist_request_url(
+                    endpoint,
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    exp=exp,
+                    right=right,
+                    strike=strike,
+                )
+            else:
+                ## Quote workers do not send a range; pin the first hole.
+                date = None
+                range_start, range_end = start_date, end_date
+                if missing and "quote" in str(endpoint).lower():
+                    date = missing[0]
+                    range_start, range_end = None, None
+                build_interval = interval if interval in VALID_INTERVALS else None
+                params = _build_params(
+                    symbol=symbol,
+                    start_date=range_start,
+                    end_date=range_end,
+                    date=date,
+                    exp=exp,
+                    strike=strike,
+                    right=right,
+                    interval=build_interval,
+                )
+                reconstructed = _quote_history_request_url(endpoint, params)
+        except Exception:
+            reconstructed = None
+    if reconstructed:
+        return f"url={reconstructed}"
+    if url:
+        return f"url={url}"
+    if endpoint:
+        return f"endpoint={endpoint}"
+    return "endpoint=unknown"
+
+
+def enforce_listed_session_coverage(
+    df: pd.DataFrame,
+    *,
+    start_date: str,
+    end_date: str,
+    symbol: str,
+    exp: str,
+    right: str,
+    strike: float,
+    listed_dates: Optional[Set[str]] = None,
+    url: Optional[str] = None,
+    endpoint: Optional[str] = None,
+    interval: Optional[str] = None,
+) -> pd.DataFrame:
+    """Drop unlisted extra days; raise or omit missing listed sessions.
+
+    Expected sessions are ``list_dates ∩ [start_date, end_date]``. Days before
+    first listed / after last listed, and interior holes not on ``list_dates``,
+    are not expected. Extra frame days not in that set are dropped.
+
+    Used for single-contract quote-to-EOD, EOD, and OHLC (session dates from the
+    index). Bulk queries are not covered here.
+
+    Args:
+        df: Quote, EOD, or OHLC frame (may be empty but should keep columns).
+        start_date: Inclusive request start.
+        end_date: Inclusive request end.
+        symbol: Underlying ticker.
+        exp: Expiration.
+        right: Option right.
+        strike: Strike price.
+        listed_dates: Prefetched calendar; loaded if omitted.
+        url: Request URL when the caller already has it (fallback if reconstruct fails).
+        endpoint: v2/v3 hist path used to reconstruct ``url=`` in messages.
+        interval: OHLC interval for reconstructed v3 query strings.
+
+    Returns:
+        Frame restricted to expected sessions. Missing expected dates are
+        omitted by default (``SETTINGS.listed_session_not_found`` is ``omit``).
+
+    Raises:
+        ThetaDataNotFound: Calendar could not be loaded, or a listed session
+            in the window is missing and policy is ``raise``.
+    """
+    if listed_dates is None:
+        listed_dates = _load_listed_quote_dates(
+            symbol=symbol, exp=exp, right=right, strike=strike
+        )
+    if listed_dates is None:
+        loc = _format_coverage_location(
+            url=url,
+            endpoint=endpoint,
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            exp=exp,
+            right=right,
+            strike=strike,
+            interval=interval,
+        )
+        raise ThetaDataNotFound(
+            "Could not prefetch list_dates for "
+            f"{symbol} {strike}{right} exp={exp}; cannot check coverage. {loc}"
+        )
+    expected = set(_listed_dates_in_request_window(listed_dates, start_date, end_date))
+    if df.empty:
+        clipped = df
+    else:
+        iso = pd.Index(pd.to_datetime(df.index).strftime("%Y-%m-%d"))
+        extra = sorted(set(iso) - expected)
+        if extra:
+            loc = _format_coverage_location(
+                url=url,
+                endpoint=endpoint,
+                symbol=symbol,
+                start_date=start_date,
+                end_date=end_date,
+                exp=exp,
+                right=right,
+                strike=strike,
+                interval=interval,
+            )
+            listed_gap_logger.warning(
+                "Dropping rows not on list_dates in the request window. "
+                "symbol=%s expiration=%s strike=%s right=%s extra=%s %s",
+                symbol,
+                exp,
+                strike,
+                right,
+                extra,
+                loc,
+            )
+        mask = np.asarray(iso.isin(list(expected)), dtype=bool)
+        clipped = df[mask]
+    present = _index_iso_dates(clipped.index)
+    missing = sorted(expected - present)
+    if not missing:
+        return clipped
+    loc = _format_coverage_location(
+        url=url,
+        endpoint=endpoint,
+        symbol=symbol,
+        start_date=start_date,
+        end_date=end_date,
+        exp=exp,
+        right=right,
+        strike=strike,
+        interval=interval,
+        missing=missing,
+    )
+    msg = (
+        "Listed session(s) missing after fetch. "
+        f"symbol={symbol} expiration={exp} strike={strike} right={right} "
+        f"missing={missing} {loc}"
+    )
+    if _omits_missing_listed_sessions():
+        listed_gap_logger.warning("%s; omitting those dates (SETTINGS.listed_session_not_found=omit).", msg)
+        return clipped
+    raise ThetaDataNotFound(msg)
+
+
+enforce_listed_quote_coverage = enforce_listed_session_coverage
+
+
+def _quote_history_request_url(endpoint: str, params: dict) -> str:
+    """Build the v3 history URL that would be POSTed for this date.
+
+    Args:
+        endpoint: ThetaData path (e.g. HISTORICAL_QUOTE).
+        params: Per-date query params.
+
+    Returns:
+        ``endpoint?k=v&...`` string for the 472 CSV.
+    """
+    query = urlencode({key: value for key, value in params.items() if value is not None})
+    if not query:
+        return endpoint
+    return f"{endpoint}?{query}"
+
+
+def _record_quote_472_csv(params: dict, url: Optional[str], missing_date: Optional[str]) -> None:
+    """Append a QuantTools ``.cache`` CSV row for a quote-history 472.
+
+    Args:
+        params: Per-date request params.
+        url: History/quote endpoint for this worker.
+        missing_date: ISO session date.
+    """
+    if url is not None and url != HISTORICAL_QUOTE:
+        return
+    endpoint = url or HISTORICAL_QUOTE
+    try:
+        from trade.datamanager.utils.quote_472_log import append_quote_472_row
+
+        append_quote_472_row(
+            symbol=params.get("symbol"),
+            expiration=params.get("expiration"),
+            strike=params.get("strike"),
+            right=params.get("right"),
+            missing_date=missing_date,
+            url=_quote_history_request_url(endpoint, params),
+        )
+    except Exception as exc:
+        listed_gap_logger.warning("Could not record quote 472 csv: %s", exc)
+
+
 def _frame_for_listed_not_found(
     params: dict,
     listed_dates: Optional[Set[str]],
     exc: ThetaDataNotFound,
+    url: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Return an empty frame when 472 hits a listed session; otherwise re-raise.
+    """Return an empty frame for a per-date 472 so the range pool can finish.
+
+    A raise here aborts ``runThreads`` for the whole window. Coverage of
+    listed sessions is enforced after resample via
+    ``enforce_listed_quote_coverage``. Quote-history 472s are also appended
+    to ``GEN_CACHE_PATH/thetadata/quote_472.csv``.
 
     Args:
         params: Per-date request params (includes ``date`` as ``YYYYMMDD``).
         listed_dates: Prefetched ``list_dates`` ISO set, or None if unknown.
         exc: The 472 exception from this date's fetch.
+        url: Worker endpoint URL (CSV is quote-history only).
 
     Returns:
         Empty DataFrame so ``concat`` omits this session.
-
-    Raises:
-        ThetaDataNotFound: Calendar unknown, date missing from params, or
-            session is not on ``list_dates``.
     """
-    if listed_dates is None:
-        raise exc
     iso = _iso_session_date(params.get("date"))
-    if iso is None or iso not in listed_dates:
-        raise exc
+    on_calendar = listed_dates is not None and iso is not None and iso in listed_dates
     listed_gap_logger.warning(
-        "ThetaData 472 for a session listed by list_dates; omitting from range. "
-        "symbol=%s expiration=%s strike=%s right=%s date=%s",
+        "ThetaData 472; omitting session from range concat. "
+        "symbol=%s expiration=%s strike=%s right=%s date=%s on_list_dates=%s err=%s",
         params.get("symbol"),
         params.get("expiration"),
         params.get("strike"),
         params.get("right"),
         iso,
+        on_calendar,
+        exc,
     )
+    _record_quote_472_csv(params, url, iso)
     return pd.DataFrame()
 
 
@@ -615,22 +958,15 @@ def _multi_threaded_range_fetch(
         print_url (bool): Whether to print the request URL for the first request.
         **kwargs: Additional parameters for the request.
     Returns:
-        pd.DataFrame: Concatenated per-date frames. Days that 472'd but are on
-            ``list_dates`` are omitted.
+        pd.DataFrame: Concatenated per-date frames. Per-date 472s are omitted
+            from the concat; listed-session coverage is checked after EOD patch.
 
     Raises:
-        ThetaDataNotFound: 472 for a session not listed by ``list_dates``, or when
-            the calendar could not be prefetched.
-        ThetaDataContainsFutureDateError: Not raised from the worker; future-date
-            400s are omitted.
+        ThetaDataNotFound: Vendor ``list_dates`` could not be prefetched.
         Exception: Other ThetaData domain errors from a worker. Transient
             fetch/parse errors log and omit that date.
     """
     logger.warning(LOOP_WARN_MSG + f" Endpoint: {url}")
-
-    ## Generate business day date range excluding holidays & weekends
-    dt_range = pd.date_range(start=start_date, end=end_date, freq="1b").strftime("%Y-%m-%d").tolist()
-    dt_range = [dt for dt in dt_range if dt not in HOLIDAY_SET]
 
     ## For any endpoint that requires interval, set default. Down the pipeline we resample to requested interval
     ## ThetaData V3 currently doesnt support 1d interval, so we set to default intraday.
@@ -640,13 +976,32 @@ def _multi_threaded_range_fetch(
     if "interval" in kwargs:
         kwargs.pop("interval")
 
-    ## One calendar call for the range so workers only do a set lookup on 472.
+    ## Query listed sessions when the contract is fully specified; otherwise weekdays.
     listed_dates = _load_listed_quote_dates(
         symbol=symbol,
         exp=kwargs.get("exp"),
         right=kwargs.get("right"),
         strike=kwargs.get("strike"),
     )
+    contract_complete = (
+        symbol is not None
+        and kwargs.get("exp") is not None
+        and kwargs.get("right") is not None
+        and kwargs.get("strike") is not None
+    )
+    if contract_complete:
+        if listed_dates is None:
+            raise ThetaDataNotFound(
+                "Could not prefetch list_dates for "
+                f"{symbol} {kwargs.get('strike')}{kwargs.get('right')} "
+                f"exp={kwargs.get('exp')}; refusing a weekday quote grid."
+            )
+        dt_range = _listed_dates_in_request_window(listed_dates, start_date, end_date)
+    else:
+        dt_range = pd.date_range(start=start_date, end=end_date, freq="1b").strftime("%Y-%m-%d").tolist()
+        dt_range = [dt for dt in dt_range if dt not in HOLIDAY_SET]
+    if not dt_range:
+        return pd.DataFrame(columns=["timestamp"])
 
     ## Build params for each date
     params_set = [
@@ -663,14 +1018,14 @@ def _multi_threaded_range_fetch(
     inputs = [[url] * len(dt_range), params_set, [print_url] + [False] * (len(dt_range) - 1)]
 
     def _thread_fetch(url, params, print_url):
-        """Fetch one date; omit listed 472s and future-date 400s; re-raise other ThetaData errors."""
+        """Fetch one date; omit 472s and future-date 400s; re-raise other ThetaData errors."""
         try:
             ## Connection resets are retried inside _fetch_data (expo backoff, 5 tries).
             txt = _fetch_data(url, params, print_url)
             return _parse_csv_to_dataframe(txt)
         except ThetaDataNotFound as e:
-            ## Listed session with no tape: omit so the rest of the range survives.
-            return _frame_for_listed_not_found(params, listed_dates, e)
+            ## 472 must not abort runThreads; coverage is enforced after EOD patch.
+            return _frame_for_listed_not_found(params, listed_dates, e, url=url)
         except ThetaDataContainsFutureDateError as e:
             ## +1d pads (and similar) can include tomorrow; omit that session only.
             return _frame_for_future_date(params, e)
@@ -847,6 +1202,8 @@ def _with_ticker_change_handling(func: Callable, symbol: str, **kwargs: Any) -> 
 
         # Multiple segments: fetch and merge
         dataframes = []
+        missing_roots = []
+        fetched_roots = []
         for segment_symbol, seg_start, seg_end in segments:
             logger.info(f"Fetching {segment_symbol} data: {seg_start} to {seg_end}")
 
@@ -858,19 +1215,29 @@ def _with_ticker_change_handling(func: Callable, symbol: str, **kwargs: Any) -> 
             try:
                 df = func(symbol=segment_symbol, **segment_kwargs)
 
+                if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+                    missing_roots.append(segment_symbol)
+                    continue
+
                 # Normalize root column to current symbol
                 if "root" in df.columns:
                     df["root"] = symbol
 
                 dataframes.append(df)
+                fetched_roots.append(segment_symbol)
 
             except Exception as e:
                 logger.warning(f"Failed to fetch {segment_symbol} data: {e}")
+                missing_roots.append(segment_symbol)
                 continue
 
         # Merge results
         if not dataframes:
-            raise ValueError(f"No data retrieved for {symbol}")
+            raise ThetaDataNotFound(
+                "No data after ticker-change split. "
+                f"requested_symbol={symbol} missing_roots={missing_roots} "
+                f"fetched_roots={fetched_roots} segments={segments} params={kwargs}"
+            )
 
         if len(dataframes) == 1:
             return dataframes[0]

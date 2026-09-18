@@ -20,7 +20,7 @@ from .utils import (
     is_theta_data_retrieval_successful,
 )
 from dbase.utils import enforce_bus_hours, add_eod_timestamp
-from ..ThetaExceptions import raise_thetadata_exception
+from ..ThetaExceptions import ThetaDataNotFound, raise_thetadata_exception
 from .patches import ThetaDataPatchProcessor
 
 logger = setup_logger("dbase.DataAPI.ThetaData.switcher", stream_log_level="WARNING")
@@ -41,6 +41,69 @@ def _log_call(func_name: str, use_v2: bool) -> None:
 
 def _apply_patches(func_name: str, result, *args, **kwargs):
     return ThetaDataPatchProcessor.apply_patches(func_name, result, *args, **kwargs)
+
+
+def _is_single_option_query(**params) -> bool:
+    """Return True when the call is a fully specified single-contract window.
+
+    Args:
+        **params: Switcher retrieve kwargs.
+
+    Returns:
+        True when symbol, dates, exp, right, and strike are all set.
+    """
+    return not any(
+        params.get(key) is None
+        for key in ("symbol", "start_date", "end_date", "exp", "right", "strike")
+    )
+
+
+def _hist_endpoint_for_kind(kind: str) -> str:
+    """Return the v2 or v3 hist path for EOD, OHLC, or quote coverage messages.
+
+    Args:
+        kind: ``eod``, ``ohlc``, or ``quote``.
+
+    Returns:
+        Full endpoint URL (no query string).
+    """
+    if _use_v2():
+        return {
+            "eod": "http://127.0.0.1:25510/v2/hist/option/eod",
+            "ohlc": "http://127.0.0.1:25510/v2/hist/option/ohlc",
+            "quote": "http://127.0.0.1:25510/v2/hist/option/quote",
+        }[kind]
+    from dbase.DataAPI.ThetaData.v3.vars import EOD_OHLC, HISTORICAL_QUOTE, OHLC_URL
+
+    return {"eod": EOD_OHLC, "ohlc": OHLC_URL, "quote": HISTORICAL_QUOTE}[kind]
+
+
+def _enforce_single_option_listed_coverage(res, *, kind: str, **params):
+    """Apply listed-session omit/raise to single-option EOD/OHLC frames.
+
+    Args:
+        res: Vendor frame.
+        kind: ``eod``, ``ohlc``, or ``quote`` (selects the hist endpoint in messages).
+        **params: Same kwargs as retrieve_eod_ohlc / retrieve_ohlc.
+
+    Returns:
+        Coverage-clipped frame, or ``res`` unchanged for bulk/incomplete queries.
+    """
+    if not _is_single_option_query(**params) or not isinstance(res, pd.DataFrame):
+        return res
+    from dbase.DataAPI.ThetaData.v3.utils import enforce_listed_session_coverage
+
+    return enforce_listed_session_coverage(
+        res,
+        start_date=params["start_date"],
+        end_date=params["end_date"],
+        symbol=params["symbol"],
+        exp=params["exp"],
+        right=params["right"],
+        strike=params["strike"],
+        endpoint=_hist_endpoint_for_kind(kind),
+        interval=params.get("interval"),
+    )
 
 
 def retrieve_quote_rt(
@@ -311,6 +374,7 @@ def retrieve_ohlc(
 
         res = endpoints._retrieve_ohlc(**params, **kwargs)
 
+    res = _enforce_single_option_listed_coverage(res, kind="ohlc", **params)
     return _apply_patches("retrieve_ohlc", res, **params, **kwargs)
 
 
@@ -385,6 +449,7 @@ def retrieve_eod_ohlc(
 
         res = endpoints._retrieve_eod_ohlc(**params, **kwargs)
 
+    res = _enforce_single_option_listed_coverage(res, kind="eod", **params)
     return _apply_patches("retrieve_eod_ohlc", res, **params, **kwargs)
 
 
@@ -803,21 +868,27 @@ def quote_to_eod_patch(
     Returns
     -------
     pd.DataFrame
-        A DataFrame containing the end-of-day quote data for the specified option contract.
+        End-of-day quote columns for listed sessions in the request window.
+        Extra days not on ``list_dates`` are dropped. Missing listed sessions
+        are omitted unless ``SETTINGS.listed_session_not_found`` is ``raise``.
     """
     if quote_func is None:
         quote_func = retrieve_quote
 
-    q = quote_func(
-        symbol=symbol,
-        end_date=end_date,
-        exp=exp,
-        right=right,
-        start_date=start_date,
-        strike=strike,
-        print_url=print_url,
-        interval="1d",
-    )
+    try:
+        q = quote_func(
+            symbol=symbol,
+            end_date=end_date,
+            exp=exp,
+            right=right,
+            start_date=start_date,
+            strike=strike,
+            print_url=print_url,
+            interval="1d",
+        )
+    except ThetaDataNotFound:
+        q = pd.DataFrame()
+        q.index = pd.DatetimeIndex([])
     q.index = add_eod_timestamp(q.index)
     if not q.empty:
         q_to_eod = q[
@@ -860,6 +931,19 @@ def quote_to_eod_patch(
     )
     q_to_eod.index = pd.to_datetime(q_to_eod.index)
     q_to_eod.index.name = "Datetime"
+    from dbase.DataAPI.ThetaData.v3.utils import enforce_listed_session_coverage
+
+    q_to_eod = enforce_listed_session_coverage(
+        q_to_eod,
+        start_date=start_date,
+        end_date=end_date,
+        symbol=symbol,
+        exp=exp,
+        right=right,
+        strike=strike,
+        endpoint=_hist_endpoint_for_kind("quote"),
+        interval="1d",
+    )
     return _apply_patches(
         "quote_to_eod_patch",
         q_to_eod,
