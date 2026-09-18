@@ -364,6 +364,8 @@ def clone_database_schema(
       - Rewrites those directives so restore targets `target_db`.
       - Restores using `mysql` client (not statement splitting), which is required for routines/triggers/events.
       - Does NOT drop the source DB.
+      - Dumps with `--set-gtid-purged=OFF` so restore onto the same GTID-enabled
+        server does not SET GTID_PURGED (ERROR 3546 overlap with GTID_EXECUTED).
 
     Args:
         source_db: Source database name to clone from
@@ -417,6 +419,9 @@ def clone_database_schema(
             "--skip-add-drop-database",  # do NOT emit DROP DATABASE
             "--set-charset",
             "--skip-routines",
+            ## Same-server env clone (dry_run) already has these GTIDs executed;
+            ## SET GTID_PURGED from a default dump overlaps GTID_EXECUTED (ERROR 3546).
+            "--set-gtid-purged=OFF",
             *extra_mysqldump_args,
         ]
 
