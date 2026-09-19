@@ -1184,6 +1184,9 @@ def _raw_retrieve_quote(
     )
 
     data = _new_dataframe_formatting(data, interval=interval or "30m", force_resampling=True)
+    ## Empty concat has no Midpoint (listed-only grid miss, all 472s). Do not bootstrap.
+    if data.empty:
+        return data
     data = bootstrap_ohlc(data)
 
     if SETTINGS.use_old_formatting:
