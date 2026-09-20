@@ -285,23 +285,27 @@ def convert_time_to_miliseconds(time):
 
 
 def bootstrap_ohlc(data: pd.DataFrame, copy_column: str = "Midpoint"):
-    """
-    Format the OHLC data to have a consistent structure.
-    Parameters
-    ----------
-    data : pd.DataFrame
-        The OHLC data to format.
-    copy_column : str, optional
-        The column to copy values from, by default 'Midpoint'.
+    """Copy midpoint into missing OHLC columns.
 
-    Returns
-    -------
-    pd.DataFrame
-        The formatted OHLC data.
+    Empty frames (no listed sessions, all 472 omits) have no ``Midpoint`` column.
+    Return them unchanged so callers can treat empty as empty instead of KeyError.
+
+    Args:
+        data: Quote or OHLC frame to format.
+        copy_column: Column to copy into Open/High/Low/Close/Volume. Overridden
+            to ``Midpoint`` for the v2/v3 contract.
+
+    Returns:
+        The same frame with OHLC columns filled, or ``data`` unchanged when empty
+        or when ``Midpoint`` is missing.
     """
+    copy_column = "Midpoint"
+    if data is None or not isinstance(data, pd.DataFrame) or data.empty:
+        return data if isinstance(data, pd.DataFrame) else pd.DataFrame()
+    if copy_column not in data.columns:
+        return data
 
     new_cols = ["Open", "High", "Low", "Close", "Volume"]
-    copy_column = "Midpoint"
     for col in new_cols:
         if col not in data.columns:
             data[col.capitalize()] = data[copy_column]

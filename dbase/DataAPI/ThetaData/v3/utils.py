@@ -201,7 +201,9 @@ Multi-Threading Details
 _multi_threaded_range_fetch is used when endpoints don't support native date ranges:
 
 1. Prefetch vendor ``list_dates`` when the contract is fully specified
-2. Query listed sessions inside ``[start_date, end_date]`` (weekday grid only if ids are incomplete)
+2. Query listed sessions inside ``[start_date, end_date]`` (weekday grid only if ids are incomplete);
+   quote history also pads NY today when it is a trading day, unexpired, and already in the window
+   (``list_dates`` can lag ``history/quote``)
 3. Build separate parameter sets for each date
 4. Use default intraday interval (from PRICING_CONFIG)
 5. Execute requests in parallel using runThreads()
@@ -247,8 +249,8 @@ Notes
 -----
 - All functions are designed for internal use by endpoints.py
 - Ticker change data comes from TICK_CHANGE_ALIAS mapping
-- Quote range queries for a full contract use vendor ``list_dates``; incomplete
-  contracts still use a holiday-stripped weekday grid
+- Quote range queries for a full contract use vendor ``list_dates`` plus at most
+  one unlisted today pad; incomplete contracts still use a holiday-stripped weekday grid
 - Resampling respects business hours via enforce_bus_hours()
 
 See Also
@@ -278,6 +280,7 @@ from dbase.DataAPI.ThetaData.v3.vars import (
 )
 
 from trade import PRICING_CONFIG, HOLIDAY_SET
+from trade.helpers.helper import is_weekend, ny_now
 from trade.helpers.threads import runThreads
 import numpy as np # noqa
 from ..utils import _fetch_data, _parse_csv_to_dataframe
@@ -525,6 +528,85 @@ def _listed_dates_in_request_window(
     return sorted(d for d in listed_dates if start_iso <= d <= end_iso)
 
 
+def _is_quote_history_endpoint(url: Optional[str], endpoint: Optional[str]) -> bool:
+    """Return True when the request is v3 option history/quote.
+
+    Args:
+        url: Full quote-history URL, if known.
+        endpoint: Hist path passed by coverage callers.
+
+    Returns:
+        True for ``HISTORICAL_QUOTE`` only.
+    """
+    return url == HISTORICAL_QUOTE or endpoint == HISTORICAL_QUOTE
+
+
+def _unlisted_quote_today_iso(
+    start_date: str,
+    end_date: str,
+    exp: Optional[Any],
+) -> Optional[str]:
+    """Return today's ISO date when it is a live quote session in the window.
+
+    Pads at most one day. ``list_dates`` can omit today after the close while
+    ``history/quote`` already has prints. A 472 on a post-split dead strike still
+    omits. Does not loop unlisted weekdays in the lookback.
+
+    Args:
+        start_date: Inclusive request start.
+        end_date: Inclusive request end.
+        exp: Option expiration. No pad when missing or when today is after expiry.
+
+    Returns:
+        Today's ``YYYY-MM-DD``, or None when the pad does not apply.
+    """
+    if exp is None:
+        return None
+    start_iso = _iso_session_date(start_date)
+    end_iso = _iso_session_date(end_date)
+    exp_iso = _iso_session_date(str(exp))
+    if start_iso is None or end_iso is None or exp_iso is None:
+        return None
+    today_iso = ny_now().strftime("%Y-%m-%d")
+    ## QUOTE end is today when unexpired; only fetch that extra session if it is
+    ## already inside the request window and is a trading day.
+    if today_iso < start_iso or today_iso > end_iso:
+        return None
+    if today_iso > exp_iso:
+        return None
+    if is_weekend(today_iso) or today_iso in HOLIDAY_SET:
+        return None
+    return today_iso
+
+
+def _with_unlisted_quote_today(
+    dates: List[str],
+    start_date: str,
+    end_date: str,
+    exp: Optional[Any],
+    *,
+    apply: bool,
+) -> List[str]:
+    """Union listed sessions with unlisted today for quote history.
+
+    Args:
+        dates: Listed ISO dates already clipped to the request window.
+        start_date: Inclusive request start.
+        end_date: Inclusive request end.
+        exp: Option expiration.
+        apply: True only for quote-history fetches/coverage.
+
+    Returns:
+        Sorted ISO dates, with today appended when the pad applies.
+    """
+    if not apply:
+        return dates
+    today_iso = _unlisted_quote_today_iso(start_date, end_date, exp)
+    if today_iso is None or today_iso in dates:
+        return dates
+    return sorted(dates + [today_iso])
+
+
 def _index_iso_dates(index: pd.Index) -> Set[str]:
     """Map a DatetimeIndex (possibly with EOD timestamps) to calendar ISO dates.
 
@@ -681,9 +763,11 @@ def enforce_listed_session_coverage(
 ) -> pd.DataFrame:
     """Drop unlisted extra days; raise or omit missing listed sessions.
 
-    Expected sessions are ``list_dates ∩ [start_date, end_date]``. Days before
-    first listed / after last listed, and interior holes not on ``list_dates``,
-    are not expected. Extra frame days not in that set are dropped.
+    Expected sessions are ``list_dates ∩ [start_date, end_date]``. Quote history
+    also expects NY today when it is a trading day, unexpired, and in the window
+    so a calendar-lag print is not dropped. Days before first listed / after last
+    listed, and interior holes not on ``list_dates``, are not expected. Extra
+    frame days not in that set are dropped.
 
     Used for single-contract quote-to-EOD, EOD, and OHLC (session dates from the
     index). Bulk queries are not covered here.
@@ -729,7 +813,15 @@ def enforce_listed_session_coverage(
             "Could not prefetch list_dates for "
             f"{symbol} {strike}{right} exp={exp}; cannot check coverage. {loc}"
         )
-    expected = set(_listed_dates_in_request_window(listed_dates, start_date, end_date))
+    expected = set(
+        _with_unlisted_quote_today(
+            _listed_dates_in_request_window(listed_dates, start_date, end_date),
+            start_date,
+            end_date,
+            exp,
+            apply=_is_quote_history_endpoint(url, endpoint),
+        )
+    )
     if df.empty:
         clipped = df
     else:
@@ -996,7 +1088,13 @@ def _multi_threaded_range_fetch(
                 f"{symbol} {kwargs.get('strike')}{kwargs.get('right')} "
                 f"exp={kwargs.get('exp')}; refusing a weekday quote grid."
             )
-        dt_range = _listed_dates_in_request_window(listed_dates, start_date, end_date)
+        dt_range = _with_unlisted_quote_today(
+            _listed_dates_in_request_window(listed_dates, start_date, end_date),
+            start_date,
+            end_date,
+            kwargs.get("exp"),
+            apply=url == HISTORICAL_QUOTE,
+        )
     else:
         dt_range = pd.date_range(start=start_date, end=end_date, freq="1b").strftime("%Y-%m-%d").tolist()
         dt_range = [dt for dt in dt_range if dt not in HOLIDAY_SET]
