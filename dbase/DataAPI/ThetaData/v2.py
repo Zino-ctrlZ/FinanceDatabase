@@ -283,6 +283,33 @@ def quote_to_eod_patch(
     )
 
 
+def _filter_ticker_history_window(
+    frame: pd.DataFrame,
+    start_date: str,
+    end_date: str,
+) -> pd.DataFrame:
+    """Clip a ticker-split frame to the request calendar window.
+
+    EOD option rows are stamped at market close (16:00). Comparing those
+    timestamps to a date-only ``end_date`` (midnight) drops same-day and
+    end-day bars. Normalize both sides to calendar dates so Fri-only and
+    Fri→Mon windows keep the 16:00 prints.
+
+    Args:
+        frame: Timeseries indexed by datetime (often 16:00 EOD stamps).
+        start_date: Inclusive window start (YYYY-MM-DD or parseable).
+        end_date: Inclusive window end (YYYY-MM-DD or parseable).
+
+    Returns:
+        Rows whose index date falls in ``[start_date, end_date]`` inclusive.
+    """
+    ## Calendar compare: midnight end_date would exclude 16:00 EOD stamps
+    start_day = pd.Timestamp(start_date).normalize()
+    end_day = pd.Timestamp(end_date).normalize()
+    idx_days = pd.DatetimeIndex(frame.index).normalize()
+    return frame.loc[(idx_days >= start_day) & (idx_days <= end_day)]
+
+
 def resolve_ticker_history(kwargs, _callable, _type="historical", skip_index_filtering=False):
     """Fetch history across a ticker rename (e.g. FB → META).
 
@@ -321,10 +348,9 @@ def resolve_ticker_history(kwargs, _callable, _type="historical", skip_index_fil
         try:
             old_tick_data = _callable(**old_tick_kwargs) if old_attempted else None
             if not skip_index_filtering and old_tick_data is not None:
-                old_tick_data = old_tick_data[
-                    (old_tick_data.index >= pd.Timestamp(kwargs["start_date"]))
-                    & (old_tick_data.index <= pd.Timestamp(kwargs["end_date"]))
-                ]
+                old_tick_data = _filter_ticker_history_window(
+                    old_tick_data, kwargs["start_date"], kwargs["end_date"]
+                )
 
         except ThetaDataNotFound as e:
             logger.info(
@@ -339,10 +365,9 @@ def resolve_ticker_history(kwargs, _callable, _type="historical", skip_index_fil
                 _callable(**new_tick_kwargs) if new_attempted else None
             )  ## Opting for expiration date instead of end date cause data cannot go beyond expiration date
             if not skip_index_filtering and new_tick_data is not None:
-                new_tick_data = new_tick_data[
-                    (new_tick_data.index >= pd.Timestamp(kwargs["start_date"]))
-                    & (new_tick_data.index <= pd.Timestamp(kwargs["end_date"]))
-                ]
+                new_tick_data = _filter_ticker_history_window(
+                    new_tick_data, kwargs["start_date"], kwargs["end_date"]
+                )
 
         except ThetaDataNotFound as e:
             logger.info(f"No data found for new_tick {new_tick} on {use_date}")
