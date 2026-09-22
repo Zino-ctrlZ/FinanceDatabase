@@ -778,13 +778,16 @@ def dynamic_batch_update(db, table_name, update_values, condition, debug=False):
 
 def execute_query(db, table_name, query, params=None):
     """
-    Execute a query on a specified table in the database.
+    Execute a write (or DDL) query on a specified table in the database.
 
     Parameters:
-    - db: Database connection string.
+    - db: Logical base database name (e.g. 'portfolio_data').
     - table_name: The name of the table to execute the query on.
     - query: The SQL query to execute.
     - params: Dictionary of parameters for the query (optional).
+
+    Returns:
+        Last inserted id when the statement produced one, else None.
     """
 
     engine = get_engine(db)
@@ -794,8 +797,12 @@ def execute_query(db, table_name, query, params=None):
 
     # Execute the query
     with engine.begin() as conn:
-        conn.execute(query, params or {})
-        logger.info("Query executed successfully.", end="\r")
+        result = conn.execute(query, params or {})
+        logger.info("Query executed successfully.")
+        lastrowid = getattr(result, "lastrowid", None)
+        if lastrowid in (None, 0):
+            return None
+        return int(lastrowid)
 
 
 def _rewrite_query_database_names(query: str, old_db: str, new_db: str) -> str:

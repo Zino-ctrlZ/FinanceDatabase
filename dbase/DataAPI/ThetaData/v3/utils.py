@@ -282,14 +282,14 @@ from dbase.DataAPI.ThetaData.v3.vars import (
 from trade import PRICING_CONFIG, HOLIDAY_SET
 from trade.helpers.helper import is_weekend, ny_now
 from trade.helpers.threads import runThreads
-import numpy as np # noqa
+import numpy as np  # noqa
 from ..utils import _fetch_data, _parse_csv_to_dataframe
 from trade.helpers.Logging import setup_logger
 from dbase.DataAPI.ThetaData.utils import convert_string_interval_to_miliseconds, resample, normalize_date_format
 from trade.assets.helpers.utils import TICK_CHANGE_ALIAS
 from typing import Callable, Any, List, Optional, Set
 from urllib.parse import urlencode
-from trade.helpers.decorators import timeit # noqa
+from trade.helpers.decorators import timeit  # noqa
 
 logger = setup_logger("dbase.DataAPI.ThetaData.v3.utils")
 ## 472 on a session list_dates advertised: omit that day instead of aborting the range.
@@ -299,7 +299,11 @@ listed_gap_logger = setup_logger("dbase.DataAPI.ThetaData.v3.listed_quote_gap")
 ##NOTE: Interested in seeing additional overhead
 # @timeit
 def _new_dataframe_formatting(
-    df: pd.DataFrame, interval: str, is_bulk: bool = False, ignore_drop_conditional: bool = False, force_resampling: bool = False
+    df: pd.DataFrame,
+    interval: str,
+    is_bulk: bool = False,
+    ignore_drop_conditional: bool = False,
+    force_resampling: bool = False,
 ) -> pd.DataFrame:
     """Normalize a raw ThetaData CSV frame to the v3 column/index contract.
 
@@ -327,9 +331,11 @@ def _new_dataframe_formatting(
 
     df = df.copy()
     ## Some parsers leave timestamp as the index name rather than a column.
-    if df.index.name is not None and str(df.index.name).lower() == "timestamp" and "timestamp" not in [
-        str(c).lower() for c in df.columns
-    ]:
+    if (
+        df.index.name is not None
+        and str(df.index.name).lower() == "timestamp"
+        and "timestamp" not in [str(c).lower() for c in df.columns]
+    ):
         df = df.reset_index()
     df.columns = df.columns.str.lower()
     if "timestamp" not in df.columns:
@@ -478,9 +484,7 @@ def _load_listed_quote_dates(
     from dbase.DataAPI.ThetaData.list_dates_cache import get_listed_option_dates
 
     try:
-        dates = get_listed_option_dates(
-            ticker=symbol, strike=float(strike), right=right, expiration=exp
-        )
+        dates = get_listed_option_dates(ticker=symbol, strike=float(strike), right=right, expiration=exp)
     except Exception as exc:
         logger.warning(
             "Could not prefetch list_dates for %s %s%s exp=%s: %s.",
@@ -522,35 +526,16 @@ def _listed_dates_in_request_window(
     start_iso = _iso_session_date(start_date)
     end_iso = _iso_session_date(end_date)
     if start_iso is None or end_iso is None:
-        raise ThetaDataNotFound(
-            f"Could not parse quote range window start={start_date!r} end={end_date!r}"
-        )
+        raise ThetaDataNotFound(f"Could not parse quote range window start={start_date!r} end={end_date!r}")
     return sorted(d for d in listed_dates if start_iso <= d <= end_iso)
 
 
-def _is_quote_history_endpoint(url: Optional[str], endpoint: Optional[str]) -> bool:
-    """Return True when the request is v3 option history/quote.
+def _today_session_iso(start_date: str, end_date: str, exp: Optional[Any]) -> Optional[str]:
+    """Return today's ISO date when it is a live session in the request window.
 
-    Args:
-        url: Full quote-history URL, if known.
-        endpoint: Hist path passed by coverage callers.
-
-    Returns:
-        True for ``HISTORICAL_QUOTE`` only.
-    """
-    return url == HISTORICAL_QUOTE or endpoint == HISTORICAL_QUOTE
-
-
-def _unlisted_quote_today_iso(
-    start_date: str,
-    end_date: str,
-    exp: Optional[Any],
-) -> Optional[str]:
-    """Return today's ISO date when it is a live quote session in the window.
-
-    Pads at most one day. ``list_dates`` can omit today after the close while
-    ``history/quote`` already has prints. A 472 on a post-split dead strike still
-    omits. Does not loop unlisted weekdays in the lookback.
+    ``list_dates`` often lags after the close while quote and end-of-day history
+    already have prints. Pads at most one day when today is a trading day, the
+    option is unexpired, and today falls inside ``[start_date, end_date]``.
 
     Args:
         start_date: Inclusive request start.
@@ -568,8 +553,6 @@ def _unlisted_quote_today_iso(
     if start_iso is None or end_iso is None or exp_iso is None:
         return None
     today_iso = ny_now().strftime("%Y-%m-%d")
-    ## QUOTE end is today when unexpired; only fetch that extra session if it is
-    ## already inside the request window and is a trading day.
     if today_iso < start_iso or today_iso > end_iso:
         return None
     if today_iso > exp_iso:
@@ -579,32 +562,28 @@ def _unlisted_quote_today_iso(
     return today_iso
 
 
-def _with_unlisted_quote_today(
-    dates: List[str],
+def _expected_listed_sessions(
+    listed_dates: Set[str],
     start_date: str,
     end_date: str,
     exp: Optional[Any],
-    *,
-    apply: bool,
 ) -> List[str]:
-    """Union listed sessions with unlisted today for quote history.
+    """Return vendor listed sessions in the window, plus today when it applies.
 
     Args:
-        dates: Listed ISO dates already clipped to the request window.
+        listed_dates: Vendor ``list_dates`` ISO set for the contract.
         start_date: Inclusive request start.
         end_date: Inclusive request end.
         exp: Option expiration.
-        apply: True only for quote-history fetches/coverage.
 
     Returns:
-        Sorted ISO dates, with today appended when the pad applies.
+        Sorted ISO session dates expected for quote, end-of-day, and OHLC coverage.
     """
-    if not apply:
-        return dates
-    today_iso = _unlisted_quote_today_iso(start_date, end_date, exp)
-    if today_iso is None or today_iso in dates:
-        return dates
-    return sorted(dates + [today_iso])
+    dates = _listed_dates_in_request_window(listed_dates, start_date, end_date)
+    today_iso = _today_session_iso(start_date, end_date, exp)
+    if today_iso is not None and today_iso not in dates:
+        dates = sorted(dates + [today_iso])
+    return dates
 
 
 def _index_iso_dates(index: pd.Index) -> Set[str]:
@@ -763,11 +742,10 @@ def enforce_listed_session_coverage(
 ) -> pd.DataFrame:
     """Drop unlisted extra days; raise or omit missing listed sessions.
 
-    Expected sessions are ``list_dates ∩ [start_date, end_date]``. Quote history
-    also expects NY today when it is a trading day, unexpired, and in the window
-    so a calendar-lag print is not dropped. Days before first listed / after last
-    listed, and interior holes not on ``list_dates``, are not expected. Extra
-    frame days not in that set are dropped.
+    Expected sessions are ``list_dates ∩ [start_date, end_date]``, plus today when
+    it is a trading day, the option is unexpired, and today is in the window.
+    Days before first listed / after last listed, and interior holes not on
+    ``list_dates``, are not expected. Extra frame days not in that set are dropped.
 
     Used for single-contract quote-to-EOD, EOD, and OHLC (session dates from the
     index). Bulk queries are not covered here.
@@ -794,9 +772,7 @@ def enforce_listed_session_coverage(
             in the window is missing and policy is ``raise``.
     """
     if listed_dates is None:
-        listed_dates = _load_listed_quote_dates(
-            symbol=symbol, exp=exp, right=right, strike=strike
-        )
+        listed_dates = _load_listed_quote_dates(symbol=symbol, exp=exp, right=right, strike=strike)
     if listed_dates is None:
         loc = _format_coverage_location(
             url=url,
@@ -810,18 +786,9 @@ def enforce_listed_session_coverage(
             interval=interval,
         )
         raise ThetaDataNotFound(
-            "Could not prefetch list_dates for "
-            f"{symbol} {strike}{right} exp={exp}; cannot check coverage. {loc}"
+            f"Could not prefetch list_dates for {symbol} {strike}{right} exp={exp}; cannot check coverage. {loc}"
         )
-    expected = set(
-        _with_unlisted_quote_today(
-            _listed_dates_in_request_window(listed_dates, start_date, end_date),
-            start_date,
-            end_date,
-            exp,
-            apply=_is_quote_history_endpoint(url, endpoint),
-        )
-    )
+    expected = set(_expected_listed_sessions(listed_dates, start_date, end_date, exp))
     if df.empty:
         clipped = df
     else:
@@ -974,8 +941,7 @@ def _frame_for_future_date(params: dict, exc: ThetaDataContainsFutureDateError) 
     """
     iso = _iso_session_date(params.get("date"))
     listed_gap_logger.warning(
-        "ThetaData 400 future-date; omitting from range. "
-        "symbol=%s expiration=%s strike=%s right=%s date=%s err=%s",
+        "ThetaData 400 future-date; omitting from range. symbol=%s expiration=%s strike=%s right=%s date=%s err=%s",
         params.get("symbol"),
         params.get("expiration"),
         params.get("strike"),
@@ -1088,12 +1054,11 @@ def _multi_threaded_range_fetch(
                 f"{symbol} {kwargs.get('strike')}{kwargs.get('right')} "
                 f"exp={kwargs.get('exp')}; refusing a weekday quote grid."
             )
-        dt_range = _with_unlisted_quote_today(
-            _listed_dates_in_request_window(listed_dates, start_date, end_date),
+        dt_range = _expected_listed_sessions(
+            listed_dates,
             start_date,
             end_date,
             kwargs.get("exp"),
-            apply=url == HISTORICAL_QUOTE,
         )
     else:
         dt_range = pd.date_range(start=start_date, end=end_date, freq="1b").strftime("%Y-%m-%d").tolist()
@@ -1174,6 +1139,7 @@ def _get_symbol_for_date(symbol: str, date: str) -> str:
 
     # Otherwise use current symbol
     return symbol
+
 
 def _get_all_symbols_for_ticker_change(symbol: str) -> list[str]:
     """
@@ -1364,7 +1330,7 @@ def _with_ticker_change_handling(func: Callable, symbol: str, **kwargs: Any) -> 
         correct_symbol = _get_symbol_for_date(symbol, at_date)
         logger.info(f"Using symbol {correct_symbol} for date {at_date}")
         return func(symbol=correct_symbol, **kwargs)
-    
+
     # Case 4: Function name == list_dates endpoint - special handling to try all symbols
     elif func.__name__ == "_raw_list_dates":
         ## list_dates endpoint is a special case where it doesn't have any date parameters
@@ -1387,14 +1353,14 @@ def _with_ticker_change_handling(func: Callable, symbol: str, **kwargs: Any) -> 
         results = _run_without_printing_error()
         if not results:
             raise ThetaDataNotFound(f"No data found for any symbol related to {symbol}")
-        
+
         ## Combine results if multiple symbols worked, and remove duplicates
         res = []
         for lst in results.values():
             res.append(lst)
         res = pd.concat(res).drop_duplicates().sort_values("date")
         return res
-    
+
     # Case 5: Snapshot query (no date params) - use current symbol
     else:
         logger.info(f"Snapshot query - using current symbol {symbol}")
@@ -1402,23 +1368,22 @@ def _with_ticker_change_handling(func: Callable, symbol: str, **kwargs: Any) -> 
         return func(symbol=symbol, **kwargs)
 
         # except Exception as e:
-            # def _run_without_printing_error():
-            #     all_symbols = _get_all_symbols_for_ticker_change(symbol)
-            #     res = {}
-            #     for sym in all_symbols:
-            #         try:
-            #             res[sym] = func(symbol=sym, **kwargs)
-            #         except Exception as f:
-            #             logger.warning(f"Failed to fetch data for symbol {sym}: {f}")
-            #     return res
-            # results = _run_without_printing_error()
-            # if not results:
-            #     raise ThetaDataNotFound(f"No data found for any symbol related to {symbol}") from e
-            # if len(results) == 1:
-            #     return list(results.values())[0]
-            # if symbol in results:
-            #     return results[symbol]
-            # else:
-            #     logger.warning(f"Multiple symbols returned data, but none matched the current symbol {symbol}. Returning data for {list(results.keys())}")
-            #     return list(results.values())[0]
-                
+        # def _run_without_printing_error():
+        #     all_symbols = _get_all_symbols_for_ticker_change(symbol)
+        #     res = {}
+        #     for sym in all_symbols:
+        #         try:
+        #             res[sym] = func(symbol=sym, **kwargs)
+        #         except Exception as f:
+        #             logger.warning(f"Failed to fetch data for symbol {sym}: {f}")
+        #     return res
+        # results = _run_without_printing_error()
+        # if not results:
+        #     raise ThetaDataNotFound(f"No data found for any symbol related to {symbol}") from e
+        # if len(results) == 1:
+        #     return list(results.values())[0]
+        # if symbol in results:
+        #     return results[symbol]
+        # else:
+        #     logger.warning(f"Multiple symbols returned data, but none matched the current symbol {symbol}. Returning data for {list(results.keys())}")
+        #     return list(results.values())[0]
