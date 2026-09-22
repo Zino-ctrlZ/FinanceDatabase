@@ -19,8 +19,8 @@ from dbase.DataAPI.ThetaData.v3.utils import (
     _iso_session_date,
     _listed_dates_in_request_window,
     _new_dataframe_formatting,
-    _unlisted_quote_today_iso,
-    _with_unlisted_quote_today,
+    _expected_listed_sessions,
+    _today_session_iso,
     enforce_listed_quote_coverage,
 )
 from dbase.DataAPI.ThetaData.utils import bootstrap_ohlc
@@ -311,54 +311,60 @@ def test_bootstrap_ohlc_empty_frame_does_not_raise() -> None:
     assert list(out2.columns) == ["timestamp"]
 
 
-def test_unlisted_quote_today_pads_trading_day(monkeypatch) -> None:
-    """Unexpired weekday today inside the window is one extra quote session."""
+def test_expected_listed_sessions_pads_today(monkeypatch) -> None:
+    """Unexpired weekday today inside the window is always an expected session."""
     monkeypatch.setattr(
         "dbase.DataAPI.ThetaData.v3.utils.ny_now",
         lambda: datetime(2026, 9, 18, 21, 27),
     )
-    listed = ["2026-09-04", "2026-09-17"]
-    out = _with_unlisted_quote_today(
-        listed,
+    out = _expected_listed_sessions(
+        {"2026-09-04", "2026-09-17"},
         "2026-09-04",
         "2026-09-18",
         "2026-11-20",
-        apply=True,
     )
     assert out[-1] == "2026-09-18"
     assert "2026-09-17" in out
-    assert _unlisted_quote_today_iso("2026-09-04", "2026-09-18", "2026-11-20") == "2026-09-18"
+    assert _today_session_iso("2026-09-04", "2026-09-18", "2026-11-20") == "2026-09-18"
 
 
-def test_unlisted_quote_today_skips_expired_and_weekend(monkeypatch) -> None:
+def test_today_session_iso_skips_expired_and_weekend(monkeypatch) -> None:
     """No pad after expiration or on Saturday."""
     monkeypatch.setattr(
         "dbase.DataAPI.ThetaData.v3.utils.ny_now",
         lambda: datetime(2026, 9, 18, 12, 0),
     )
-    assert _unlisted_quote_today_iso("2026-09-04", "2026-09-18", "2026-09-17") is None
+    assert _today_session_iso("2026-09-04", "2026-09-18", "2026-09-17") is None
     monkeypatch.setattr(
         "dbase.DataAPI.ThetaData.v3.utils.ny_now",
         lambda: datetime(2026, 9, 19, 12, 0),
     )
-    assert _unlisted_quote_today_iso("2026-09-04", "2026-09-19", "2026-11-20") is None
+    assert _today_session_iso("2026-09-04", "2026-09-19", "2026-11-20") is None
 
 
-def test_unlisted_quote_today_not_applied_for_eod(monkeypatch) -> None:
-    """EOD coverage does not pad today."""
+def test_eod_coverage_keeps_unlisted_today_print(monkeypatch) -> None:
+    """End-of-day coverage must not drop today's print when list_dates lags."""
     monkeypatch.setattr(
         "dbase.DataAPI.ThetaData.v3.utils.ny_now",
         lambda: datetime(2026, 9, 18, 21, 27),
     )
-    listed = ["2026-09-17"]
-    out = _with_unlisted_quote_today(
-        listed,
-        "2026-09-04",
-        "2026-09-18",
-        "2026-11-20",
-        apply=False,
+    idx = pd.to_datetime(["2026-09-17", "2026-09-18"])
+    df = pd.DataFrame({"Midpoint": [1.64, 2.25]}, index=idx)
+    out = enforce_listed_quote_coverage(
+        df,
+        start_date="2026-09-04",
+        end_date="2026-09-18",
+        symbol="AAPL",
+        exp="2026-11-20",
+        right="C",
+        strike=380.0,
+        listed_dates={"2026-09-17"},
+        endpoint="http://127.0.0.1:25510/v2/hist/option/eod",
     )
-    assert out == listed
+    assert list(pd.to_datetime(out.index).strftime("%Y-%m-%d")) == [
+        "2026-09-17",
+        "2026-09-18",
+    ]
 
 
 def test_quote_coverage_keeps_unlisted_today_print(monkeypatch) -> None:
