@@ -1183,9 +1183,35 @@ def retrieve_quote_rt(
     end_date: str = None,
     **kwargs,
 ):
-    """
-    Interval size in miliseconds. 1 minute is 6000
-    Returns realtime data
+    """Retrieve today's realtime quote for one option contract.
+
+    Default (``ts=False``) hits ``/v2/snapshot/option/quote``. ``ts=True`` hits
+    ``/v2/hist/option/quote`` at a 1h interval, still limited to today.
+    ``start_date`` / ``end_date`` are accepted for backward compatibility only;
+    the request window is always today.
+
+    Renamed tickers (``TICK_CHANGE_ALIAS``, e.g. FB → META) resolve to the
+    root valid today, matching v3 ``_retrieve_quote_rt``.
+
+    Args:
+        symbol: Underlying ticker.
+        exp: Expiration date (parseable).
+        right: ``"C"`` or ``"P"``.
+        strike: Strike price as float.
+        start_time: Intraday start time.
+        print_url: Print the request URL.
+        end_time: Intraday end time.
+        ts: Return today's intraday series instead of a snapshot.
+        proxy: Proxy URL; defaults to ``get_proxy_url()``.
+        start_date: Ignored; kept for backward compatibility.
+        end_date: Ignored; kept for backward compatibility.
+        **kwargs: ``depth`` guards alias recursion.
+
+    Returns:
+        Quote frame indexed by datetime with ``Midpoint`` / ``Weighted_midpoint``.
+
+    Raises:
+        ThetaDataNotFound: Vendor 472 or no rows after alias resolution.
     """
     if not proxy:
         proxy = get_proxy_url()
@@ -1212,14 +1238,25 @@ def retrieve_quote_rt(
         "interval": interval,
         "print_url": print_url,
         "ts": ts,
+        "proxy": proxy,
     }
 
     depth = pass_kwargs["depth"] = kwargs.get("depth", 0)
     if symbol in TICK_CHANGE_ALIAS.keys() and depth < 1:
         pass_kwargs["depth"] += 1
 
+        ## The wire window is always today (overwritten below), so callers pass no dates.
+        ## The alias resolver needs a real date to pick FB vs META and, for ts=True,
+        ## to clip the series. None would become NaT and crash the window filter.
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        pass_kwargs["start_date"] = pass_kwargs["end_date"] = today_str
+
+        ## Snapshot uses the root valid today (v3 parity); ts=True keeps the old
+        ## historical split so the intraday series path is unchanged.
         return resolve_ticker_history(
-            pass_kwargs, retrieve_quote_rt, _type="historical"
+            pass_kwargs,
+            retrieve_quote_rt,
+            _type="historical" if ts else "snapshot",
         )
     end_date = int(datetime.now().strftime("%Y%m%d"))
     exp = int(pd.to_datetime(exp).strftime("%Y%m%d"))

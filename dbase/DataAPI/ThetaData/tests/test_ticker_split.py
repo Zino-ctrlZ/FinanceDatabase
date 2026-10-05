@@ -1,8 +1,9 @@
-"""Tests for ticker-split missing-root raises."""
+"""Tests for ticker-split (FB → META) history resolution and realtime quote aliasing."""
 
 import pandas as pd
 import pytest
 
+from dbase.DataAPI.ThetaData import v2
 from dbase.DataAPI.ThetaData.v2 import (
     _filter_ticker_history_window,
     resolve_ticker_history,
@@ -114,3 +115,51 @@ def test_resolve_ticker_history_keeps_same_day_eod_bar() -> None:
     }
     out = resolve_ticker_history(kwargs, _callable, _type="historical")
     pd.testing.assert_frame_equal(out, df_new)
+
+
+def _fake_quote_proxy(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Patch v2 proxy transport with one inner-200 quote row stamped today.
+
+    Returns:
+        List that collects (url, querystring) for every proxied request.
+    """
+    from datetime import datetime
+
+    today_int = datetime.now().strftime("%Y%m%d")
+    csv = (
+        "ms_of_day,bid_size,bid_exchange,bid,bid_condition,"
+        "ask_size,ask_exchange,ask,ask_condition,date\n"
+        f"57240000,10,1,41.10,50,12,1,41.90,50,{today_int}\n"
+    )
+    seen: list = []
+
+    class _Resp:
+        """Proxy JSON envelope with inner status 200."""
+
+        def __init__(self, url: str) -> None:
+            """Store the requested vendor URL."""
+            self._url = url
+
+        def json(self) -> dict:
+            """Return the proxy envelope."""
+            return {"status_code": 200, "url": self._url, "data": csv}
+
+    def _fake(thetaUrl, queryparam, instanceUrl, print_url=False):
+        """Record the request and return a fake proxy response."""
+        seen.append((thetaUrl, dict(queryparam)))
+        return _Resp(thetaUrl)
+
+    monkeypatch.setattr(v2, "request_from_proxy", _fake)
+    return seen
+
+
+@pytest.mark.parametrize("ts", [False, True])
+def test_retrieve_quote_rt_alias_without_dates(monkeypatch: pytest.MonkeyPatch, ts: bool) -> None:
+    """META realtime quote with no dates resolves to META and returns a row (Oct 2 NaT crash)."""
+    seen = _fake_quote_proxy(monkeypatch)
+    out = v2.retrieve_quote_rt(
+        symbol="META", exp="2027-03-19", right="C", strike=950.0, ts=ts, proxy="http://fake"
+    )
+    assert out["Midpoint"].tolist() == [41.5]
+    assert [q["root"] for _, q in seen] == ["META"]
+    assert seen[0][0].endswith("/hist/option/quote" if ts else "/snapshot/option/quote")
