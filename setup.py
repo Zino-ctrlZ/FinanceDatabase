@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="FinanceDatabase",        # Name of your package
+    name="dbase",        # Name of your package
     version="0.1",                 # Version number
     packages=find_packages(),      # Automatically find subpackages
     install_requires=[],           # Add dependencies if needed
